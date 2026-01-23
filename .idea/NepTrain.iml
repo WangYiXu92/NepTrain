@@ -2,7 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$/src" />
-    <orderEntry type="jdk" jdkName="Python 3.10.13 WSL (Ubuntu-22.04): (/home/aboy/anaconda3/envs/mysci/bin/python)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="mysci-wsl" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

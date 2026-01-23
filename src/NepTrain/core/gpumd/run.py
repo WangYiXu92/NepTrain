@@ -5,7 +5,9 @@
 # @email    : 1747193328@qq.com
 
 import os.path
+import shutil
 
+import numpy as np
 from ase import Atoms
 from ase.io import read as ase_read
 from ase.io import write as ase_write
@@ -20,17 +22,25 @@ from .io import RunInput
 
 from ..utils import check_env
 
+import zlib
 
-atoms_index = 0
+from ...utils import print
+
+
+def array_to_id(arr):
+    arr = np.ascontiguousarray(arr)  # 确保内存连续
+    return zlib.crc32(arr.tobytes())
+
 
 @utils.iter_path_to_atoms(["*.vasp","*.xyz"],show_progress=False)
 def calculate_gpumd(atoms:Atoms,argparse):
-    global atoms_index
-    atoms_index+=1
+
+    atoms_index = array_to_id(atoms.positions)
 
     new_atoms=[]
 
-
+    # if os.path.exists(argparse.out_file_path):
+    #     os.remove(argparse.out_file_path)
     for temperature in argparse.temperature:
 
         run = RunInput(argparse.nep_txt_path)
@@ -50,10 +60,6 @@ def calculate_gpumd(atoms:Atoms,argparse):
             atom.info["Config_type"] = f"{atom.symbols}-epoch-{argparse.time}ps-{temperature}k-{i + 1}"
 
 
-        if argparse.filter:
-            good,bad=filter_by_bonds(dump,model=atoms)
-            dump=good
-            ase_write(os.path.join(directory,"remove_by_bond_structures.xyz"),bad)
         ase_write(argparse.out_file_path,dump,append=True)
 
 
@@ -65,7 +71,7 @@ def calculate_gpumd(atoms:Atoms,argparse):
     return new_atoms
 def run_gpumd(argparse):
     check_env()
-    utils.verify_path(os.path.dirname(argparse.out_file_path))
+    utils.verify_path(os.path.dirname(os.path.abspath(argparse.out_file_path)))
     result = calculate_gpumd(argparse.model_path,argparse)
 
 

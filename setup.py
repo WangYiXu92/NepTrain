@@ -23,13 +23,13 @@ pybind11_include = pybind11.get_include()
 
 # 设定编译选项
 
-extra_link_args = ["-O3","-std=c++17"]
-extra_compile_args=["-O3","-std=c++17"]
+extra_link_args = ["-O3","-std=c++11"]
+extra_compile_args=["-O3","-std=c++11"]
 # 检查平台并设置相应的 OpenMP 编译标志
 
 if sys.platform == "win32":
     # 对于 Windows 使用 MSVC 编译器时，需要使用 /openmp
-    extra_compile_args.append('/openmp' )
+    extra_compile_args.append('/openmp')
 
 
 elif sys.platform == "darwin":

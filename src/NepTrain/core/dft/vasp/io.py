@@ -21,13 +21,15 @@ def write_to_xyz(vaspxml_path, save_path, Config_type, append=True):
     atoms = ase_read(vaspxml_path, index=":")
     index = 1
     for atom in atoms:
-        xx, yy, zz, yz, xz, xy = -atom.calc.results['stress'] * atom.get_volume()  # *160.21766
+        xx, yy, zz, yz, xz, xy = - atom.calc.results['stress'] * atom.get_volume()  # *160.21766
         atom.info['virial'] = np.array([(xx, xy, xz), (xy, yy, yz), (xz, yz, zz)])
 
         atom.calc.results['energy'] = atom.calc.results['free_energy']
 
         atom.info['Config_type'] = Config_type + str(index)
+
         atom.info['Weight'] = 1.0
+
         del atom.calc.results['stress']
         del atom.calc.results['free_energy']
         atoms_list.append(atom)
@@ -43,7 +45,7 @@ class VaspInput(Vasp):
         super(VaspInput,self).__init__(*args,**kwargs)
         self.input_params["setups"] = {"base": "recommended"}
         self.input_params["pp"] = ''
-
+        
         os.environ[self.VASP_PP_PATH] = os.path.expanduser(Config.get("environ", "potcar_path"))
 
     def calculate(self,
@@ -56,6 +58,8 @@ class VaspInput(Vasp):
         execute VASP. After execution, the energy, forces. etc. are read
         from the VASP output files.
         """
+
+                      
         Calculator.calculate(self, atoms, properties, system_changes)
         # Check for zero-length lattice vectors and PBC
         # and that we actually have an Atoms object.

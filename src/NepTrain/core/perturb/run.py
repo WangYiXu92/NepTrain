@@ -53,7 +53,7 @@ def generate_deformed_structure(prim, strain_lim,min_distance):
 
 
 @utils.iter_path_to_atoms(["*.vasp","*.xyz"],show_progress=False )
-def perturb(atoms:Atoms,cell_pert_fraction=0.04, min_distance=0.1,num=50,filter_bonds=False):
+def perturb(atoms:Atoms,cell_pert_fraction=0.04, min_distance=0.1,num=50):
     cell_pert_fraction=[-cell_pert_fraction,cell_pert_fraction]
     structures_rattle=[]
     for i in track(range(num),description=f"Current structure:{atoms.symbols}"):
@@ -66,8 +66,7 @@ def perturb(atoms:Atoms,cell_pert_fraction=0.04, min_distance=0.1,num=50,filter_
             structure.info['Config_type'] = f"perturb {i+1} strained {cell_pert_fraction}  min_distance {min_distance}"
 
         structures_rattle.append(structure)
-    if filter_bonds:
-        structures_rattle, bad = filter_by_bonds(structures_rattle, model=atoms)
+
 
 
     return structures_rattle
@@ -78,7 +77,7 @@ def run_perturb(argparse):
                      min_distance=argparse.min_distance,
 
                      num=argparse.num,
-                     filter_bonds=argparse.filter
+
                      )
     path=os.path.dirname(argparse.out_file_path)
 

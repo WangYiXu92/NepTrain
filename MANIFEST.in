@@ -1,8 +1,9 @@
-# MANIFEST.in 文件
+# MANIFEST.in file
 
 
 recursive-include src *
 prune **/__pycache__
 prune docs
+prune examples
 prune .idea
 prune .github

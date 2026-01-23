@@ -20,14 +20,15 @@ def plot_md_selected(train_des,md_des,selected_des, save_path,decomposition="pca
         # (文件名,图例,图例颜色)
 
     ]
-    if train_des is not None and train_des.size!=0:
-        config.append((train_des, "base dataset","gray"))
+
 
     if md_des is not None:
         if isinstance(md_des,np.ndarray) and md_des.size!=0:
             config.append((md_des, 'new dataset', "#07cd66"))
         elif isinstance(md_des,list) :
             config.extend(md_des)
+    if train_des is not None and train_des.size!=0:
+        config.append((train_des, "base dataset","gray"))
     if selected_des is not None  and selected_des.size!=0:
         config.append((selected_des,'selected', "red"))
 

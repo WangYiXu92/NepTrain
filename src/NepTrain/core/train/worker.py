@@ -1,93 +1,62 @@
-#!/usr/bin/env python 
-# -*- coding: utf-8 -*-
-# @Time    : 2024/10/25 20:51
-# @Author  : 兵
-# @email    : 1747193328@qq.com
-import re
-import subprocess
-import sys
-import time
-from threading import Thread
+import asyncio
+import os
 
+from dpdispatcher import Machine, Resources, Task, Submission
+from pathlib import Path
 from NepTrain import utils
 
 
-class Worker():
-    pass
-    def __init__(self, mode):
-        self.mode = mode
+def remove_sub_file(work_path: str = "./"):
+    """Remove temporary submission files."""
+    all_file = Path(work_path).glob("????????????????????????????????????????.sub.*")
+    for file in all_file:
+        file.unlink()
+    all_file = Path(work_path).glob("????????????????????????????????????????.sub")
+    for file in all_file:
+        file.unlink()
 
-        self._running=False
-
-    @property
-    def running(self):
-        return self._running
-
-    def sub_job(self,command,job_path):
-        raise NotImplementedError
-
-    def wait(self):
-        pass
-
-class LocalWorker(Worker):
-    def __init__(self,  ):
-        super().__init__("local")
-    def sub_job(self,command,job_path,**kwargs):
-        utils.verify_path(job_path)
-
-        # with  open("job.out", "w") as f_std, open("job.err", "w", buffering=1) as f_err:
-        errorcode = subprocess.call(command,
-                                    shell=True,
-                                    stdout=sys.stdout,
-                                    stderr=sys.stderr,
-                                    cwd=job_path)
-
+def submit_job(
+    machine_dict: dict,
+    resources_dict: dict,
+    task_dict_list: list,
+    submission_dict: dict,
+) -> Submission:
+    """Submit a job synchronously using dpdispatcher."""
+    machine = Machine.load_from_dict(machine_dict)
+    resources = Resources.load_from_dict(resources_dict)
+    task_list = [Task(**task_dict) for task_dict in task_dict_list]
+    submission = Submission(
+        machine=machine,
+        resources=resources,
+        task_list=task_list,
+        **submission_dict,
+    )
+    submission.run_submission(clean=False)
+    for job in submission.belonging_jobs:
+        utils.print_msg(f"Finished job {job.job_id} in {job.machine.context.remote_root}")
 
 
-class SlurmWorker(Worker):
-    def __init__(self,vasp_sh,gpumd_sh  ):
-        super().__init__("slurm")
-        self.vasp_sh = vasp_sh
-        self.gpumd_sh = gpumd_sh
-        #创建一个线程  定时检查任务状态？
-        self.job_id=[]
-        self._thread=Thread(target=self.check_job_state)
-    def sub_job(self,command,job_path,job_type="vasp"):
-        utils.verify_path(job_path)
-
-        if job_type == "vasp":
-            job_command=["sbatch",self.vasp_sh,command]
-        else:
-            job_command=["sbatch",self.gpumd_sh,command]
-        # print(command)
-
-        result = subprocess.run(job_command, capture_output=True, text=True, check=True,cwd=job_path)
-        job_id=int(result.stdout.replace("Submitted batch job ",""))
-        self.job_id.append(job_id)
-        utils.print_msg(f"Task submitted: {job_id}",)
+    return submission
 
 
-    def wait(self):
-        utils.print_msg("Waiting for all tasks to finish...")
-        while  self.job_id:
-            for job in self.job_id.copy():
+async def async_submit_job(
+    machine_dict: dict,
+    resources_dict: dict,
+    task_dict_list: list,
+    submission_dict: dict,
+) -> None:
+    """Submit a job asynchronously using dpdispatcher."""
+    machine = Machine.load_from_dict(machine_dict)
+    resources = Resources.load_from_dict(resources_dict)
+    task_list = [Task(**task_dict) for task_dict in task_dict_list]
+    submission = Submission(
+        machine=machine,
+        resources=resources,
+        task_list=task_list,
+        **submission_dict,
+    )
+    await submission.async_run_submission(check_interval=1, clean=False)
+    for job in submission.belonging_jobs:
+        utils.print_msg(f"Finished job {job.job_id} in {job.machine.context.remote_root}")
 
-                if not self.check_job_state(job):
-                    self.job_id.remove(job)
-            time.sleep(5)
-        utils.print_success("All tasks have finished computation.")
-
-    def check_job_state(self,job_id):
-
-        result = subprocess.run(['squeue','-j',f"{job_id}"], capture_output=True, text=True, check=True)
-        match = re.search(r'JOBID.*?(\d+) ', result.stdout, re.S)
-        #
-        # 如果找到匹配项，打印作业ID
-        if match:
-            # job_id = match.group(1)
-            return True
-
-
-        else:
-            return False
 

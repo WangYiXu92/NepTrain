@@ -10,11 +10,12 @@ import numpy as np
 
 
 # from joblib import Parallel, delayed
-
+from tqdm import tqdm
 from NepTrain import utils
 from ase.io import read as ase_read
 from ase.io import write as ase_write
 from .select import select_structures, filter_by_bonds, farthest_point_sampling
+from .filter import adjust_reasonable, parallel_filter_trajectory
 from ..gpumd.plot import plot_md_selected
 
 from ..nep.calculator import DescriptorCalculator
@@ -26,6 +27,7 @@ def run_select(argparse):
     all_trajectory=[]
     plot_config=[]
     trajectory_structures=[]
+    filter_structures = []
     for index,_path in enumerate(argparse.trajectory_paths):
 
         if utils.is_file_empty(_path):
@@ -35,10 +37,31 @@ def run_select(argparse):
         utils.print_msg(f"Reading trajectory {_path}")
 
         trajectory=ase_read(_path,":",format="extxyz")
+
+        if argparse.filter:
+            utils.print_msg(f"Start filtering...")
+            file_name = os.path.basename(_path)
+
+            # 使用示例
+            trajectory, filter_structures = parallel_filter_trajectory(
+                trajectory, argparse.filter, n_jobs=os.cpu_count()-2  # -1 表示使用所有CPU核心
+            )
+
+
+            if len(filter_structures) > 0:
+                utils.print_msg(f"Filtering {len(filter_structures)} structures.")
+                ase_write(os.path.join(os.path.dirname(_path),f"filter_{file_name}.xyz"),filter_structures,append=False)
+
+
+
         map_path_index.append(np.full(len(trajectory),index))
         trajectory_structures.extend(trajectory)
     map_path_index=np.concatenate(map_path_index)
+    if len(trajectory_structures)==0:
+        utils.print_warning("no structure.")
+        ase_write(argparse.out_file_path, trajectory_structures)
 
+        return
 
     if utils.is_file_empty(argparse.base):
         base_train=[]
@@ -48,7 +71,7 @@ def run_select(argparse):
     if utils.is_file_empty(argparse.nep):
         utils.print_msg("An invalid path for nep.txt was provided, using SOAP descriptors instead.")
         species=set()
-        for atoms in trajectory+base_train:
+        for atoms in trajectory_structures+base_train:
             for i in atoms.get_chemical_symbols():
                 species.add(i)
         kwargs_dict={
@@ -86,6 +109,7 @@ def run_select(argparse):
 
     utils.print_msg("Starting to select points, please wait...")
     new_structure_des=np.vstack(trajectory_structure_des)
+
 
 
     selected_i =farthest_point_sampling(new_structure_des,argparse.max_selected,argparse.min_distance,selected_data=train_structure_des)
