@@ -15,7 +15,7 @@ def read_symbols_from_file(file_name):
     if os.path.exists(file_name):
         with open(file_name, 'r', encoding="utf8") as f:
             trainxyz = f.read()
-        groups = re.findall("^([A-Z][a-z]?)\s+", trainxyz, re.MULTILINE)
+        groups = re.findall(r"^([A-Z][a-z]?)\s+", trainxyz, re.MULTILINE)
         groups = set(groups)
         symbols = []
         for symbol in groups:

@@ -69,7 +69,7 @@ class RunInput:
     def read_run(self,file_name):
         with open(file_name,'r',encoding="utf8") as f:
             # groups=re.findall("(\w+)\s+(.*?)\n",f.read()+"\n")
-            groups=re.findall("^([A-Za-z_]+)\s+(.*)",f.read() ,re.MULTILINE)
+            groups=re.findall(r"^([A-Za-z_]+)\s+(.*)",f.read() ,re.MULTILINE)
 
             for group in groups:
                 self.run_in[group[0].strip()]=group[1].strip()
