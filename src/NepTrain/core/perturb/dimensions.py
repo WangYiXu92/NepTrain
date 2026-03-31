@@ -23,6 +23,7 @@ from .amorphous import generate_amorphous
 from .crystal import create_oriented_supercell, get_burgers_vector
 from .sampler import SobolSampler
 from .rigid import RigidBodyManager, parse_rigid_list_string
+from .symmetry_strain import detect_crystal_system_spglib, get_independent_strain_count
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,9 @@ def calculate_sobol_dimensions(
     rotate_formula: Optional[str] = None,
     vac_elements: Optional[Any] = None,
     vac_num: int = 0,
+    antisite: bool = False,
+    antisite_pairs: Optional[Any] = None,
+    antisite_num: int = 0,
     shuffle_elements: Optional[Any] = None,
     shuffle_method: str = 'fisher_yates',
     rigid: bool = False,
@@ -75,6 +79,10 @@ def calculate_sobol_dimensions(
     rigid_composition: Optional[Any] = None,
     vol_pert_fraction: float = 0.0,
     cell_pert_fraction: float = 0.03,
+    sym_strain: bool = False,
+    sym_strain_fraction: float = 0.03,
+    sym_strain_crystal_system: Optional[str] = None,
+    sym_strain_symprec: float = 1e-2,
     # kwargs
     **kwargs,
 ) -> Dict[str, Any]:
@@ -209,6 +217,11 @@ def calculate_sobol_dimensions(
     # Vacancy dims
     d_vac = vac_num if (vac_elements and vac_num > 0) else 0
 
+    # Antisite dims
+    d_antisite = 0
+    if antisite and antisite_pairs:
+        d_antisite = antisite_num  # each swap consumes 1 dimension
+
     # Shuffle dims
     d_shuf = 0
     if shuffle_elements:
@@ -290,13 +303,23 @@ def calculate_sobol_dimensions(
 
     d_vol = 1 if vol_pert_fraction > 0 else 0
 
-    total_d = d_cell + d_disp + d_mag + d_rot + d_vac + d_shuf + d_amorphous + d_dislocation + d_gb + d_twinning + d_sf + d_surface + d_vol
+    # Symmetry-preserving strain dims (replaces d_cell when enabled)
+    d_sym_strain = 0
+    if sym_strain:
+        if sym_strain_crystal_system:
+            cs = sym_strain_crystal_system
+        else:
+            cs = detect_crystal_system_spglib(atoms, symprec=sym_strain_symprec)
+        d_sym_strain = get_independent_strain_count(cs)
+        d_cell = 0  # replace generic cell perturbation
+
+    total_d = d_cell + d_disp + d_mag + d_rot + d_vac + d_antisite + d_shuf + d_amorphous + d_dislocation + d_gb + d_twinning + d_sf + d_surface + d_vol + d_sym_strain
 
     return {
         'd_cell': d_cell, 'd_disp': d_disp, 'd_mag': d_mag, 'd_rot': d_rot,
-        'd_vac': d_vac, 'd_shuf': d_shuf, 'd_amorphous': d_amorphous,
+        'd_vac': d_vac, 'd_antisite': d_antisite, 'd_shuf': d_shuf, 'd_amorphous': d_amorphous,
         'd_dislocation': d_dislocation, 'd_gb': d_gb, 'd_twinning': d_twinning,
-        'd_sf': d_sf, 'd_surface': d_surface, 'd_vol': d_vol, 'total_d': total_d,
+        'd_sf': d_sf, 'd_surface': d_surface, 'd_vol': d_vol, 'd_sym_strain': d_sym_strain, 'total_d': total_d,
         'dummy_atoms': dummy_atoms,
         'rigid_manager': rigid_manager,
         # Normalized values

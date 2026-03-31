@@ -7,9 +7,12 @@ from .config import PerturbConfig
 from .normalize import normalize_int_list, normalize_float_list, normalize_axis_index, normalize_vector_norm, parse_range
 from .dimensions import calculate_sobol_dimensions
 from .run import run_perturb
+from .symmetry_strain import generate_symmetry_preserving_strain, detect_crystal_system_spglib, get_independent_strain_count
 from .rotate import rotate_fragments_by_formula
 from .shuffle import shuffle_element_positions
 from .stacking_fault import generate_stacking_fault
+from .antisite import generate_antisite_defects, get_equivalent_sites
+from .compatibility import validate_compatibility
 from .validation import (
     get_bond_lengths,
     get_min_bond_length,
@@ -51,6 +54,8 @@ __all__ = [
     'rotate_fragments_by_formula',
     'shuffle_element_positions',
     'generate_stacking_fault',
+    'generate_antisite_defects',
+    'get_equivalent_sites',
     'get_bond_lengths',
     'get_min_bond_length',
     'get_coordination_numbers',
@@ -79,4 +84,10 @@ __all__ = [
     'normalize_vector_norm',
     'parse_range',
     'calculate_sobol_dimensions',
+    # Symmetry-preserving strain
+    'generate_symmetry_preserving_strain',
+    'detect_crystal_system_spglib',
+    'get_independent_strain_count',
+    # Compatibility
+    'validate_compatibility',
 ]

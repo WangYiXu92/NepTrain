@@ -89,6 +89,13 @@ class PerturbConfig:
     vac_elements: Optional[Any] = None
     vac_num: int = 0
 
+    # Antisite
+    antisite: bool = False
+    antisite_pairs: Optional[Any] = None   # 'Fe,Al' or [('Fe','Al')]
+    antisite_num: int = 1
+    antisite_mode: str = 'symmetry_aware'
+    antisite_symprec: float = 1e-2
+
     # Shuffle
     shuffle_elements: Optional[Any] = None
     shuffle_method: str = 'fisher_yates'
@@ -102,6 +109,12 @@ class PerturbConfig:
 
     # Cell rotation
     rotate_cell: bool = False
+
+    # Symmetry-preserving strain
+    sym_strain: bool = False
+    sym_strain_fraction: float = 0.03
+    sym_strain_crystal_system: Optional[str] = None  # None = auto-detect
+    sym_strain_symprec: float = 1e-2
 
     # Volume
     vol_pert_fraction: float = 0.0
@@ -141,10 +154,14 @@ class PerturbConfig:
             'mag_mode': None, 'mag_noise': 0.0, 'mag_kwargs': None,
             'rotate_formula': None,
             'vac_elements': None, 'vac_num': 0,
+            'antisite': False, 'antisite_pairs': None, 'antisite_num': 1,
+            'antisite_mode': 'symmetry_aware', 'antisite_symprec': 1e-2,
             'shuffle_elements': None, 'shuffle_method': 'fisher_yates',
             'rigid': False, 'rigid_method': 'auto', 'rigid_list': None,
             'rigid_mode': 'inter', 'rigid_composition': None,
             'rotate_cell': False, 'vol_pert_fraction': 0.0,
+            'sym_strain': False, 'sym_strain_fraction': 0.03,
+            'sym_strain_crystal_system': None, 'sym_strain_symprec': 1e-2,
             'filter_bonds': False, 'validate_structure': True,
             'validate_coefficient': None, 'similarity_threshold': 0.999,
             'debug_plot': False,

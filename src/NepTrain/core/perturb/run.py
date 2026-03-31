@@ -23,6 +23,7 @@ from NepTrain.core.select.select import filter_by_bonds, compute_min_bond_length
 from .magnetic import apply_magnetic_perturbation, get_magmom_config, get_magnetic_perturbation_dims
 from .rotate import rotate_fragments_by_formula, get_molecules, parse_formula_dict
 from .vacancy import generate_vacancies, _filter_vacancies_for_export
+from .antisite import generate_antisite_defects
 from .shuffle import shuffle_element_positions, _parse_element_range, _filter_fixed_indices
 from .surface import generate_surface
 from .grain_boundary import generate_grain_boundary
@@ -34,6 +35,7 @@ from .amorphous import generate_amorphous
 from .crystal import create_oriented_supercell, get_burgers_vector
 from .sampler import SobolSampler, RandomSampler
 from .rigid import generate_rigid_perturbed_structure, RigidBodyManager, parse_rigid_list_string
+from .symmetry_strain import generate_symmetry_preserving_strain, detect_crystal_system_spglib, get_independent_strain_count
 from .plot import plot_comparison
 from .validator import (
     validate_atoms, validate_positive_integer, validate_positive_float,
@@ -42,6 +44,7 @@ from .validator import (
     validate_magnetic_mode
 )
 # from ._hiphive import generate_mc_rattled_structures
+from .compatibility import validate_compatibility
 
 # Set up module logger
 logger = get_logger(__name__)
@@ -256,6 +259,33 @@ from .normalize import (
 from .config import PerturbConfig
 from .dimensions import calculate_sobol_dimensions
 
+
+def _parse_antisite_pairs(pairs):
+    """Parse antisite_pairs from various formats to List[Tuple[str, str]]."""
+    if pairs is None:
+        return []
+    if isinstance(pairs, str):
+        # 'Fe,Al' -> [('Fe', 'Al')]
+        # 'Fe,Al;Cr,Fe' -> [('Fe', 'Al'), ('Cr', 'Fe')]
+        result = []
+        for pair_str in pairs.split(';'):
+            parts = [x.strip() for x in pair_str.split(',')]
+            if len(parts) == 2:
+                result.append((parts[0], parts[1]))
+        return result
+    if isinstance(pairs, (list, tuple)):
+        result = []
+        for p in pairs:
+            if isinstance(p, (list, tuple)) and len(p) == 2:
+                result.append((str(p[0]), str(p[1])))
+            elif isinstance(p, str) and ',' in p:
+                parts = [x.strip() for x in p.split(',')]
+                if len(parts) == 2:
+                    result.append((parts[0], parts[1]))
+        return result
+    return []
+
+
 def perturb(atoms: Atoms,
             num=20,
             cell_pert_fraction=0.03,
@@ -265,6 +295,7 @@ def perturb(atoms: Atoms,
             mag_kwargs=None,
             rotate_formula=None,
             vac_elements=None, vac_num=0,
+            antisite=False, antisite_pairs=None, antisite_num=1, antisite_mode='symmetry_aware', antisite_symprec=1e-2,
             shuffle_elements=None, shuffle_method='fisher_yates',
             surface=False, surface_indices='1,1,1', surface_vacuum=10.0, surface_layers=3,
             gb=False, gb_axis='0,0,1', gb_angle=36.87, gb_dist=0.0, gb_overlap_dist=1.2, gb_delete_overlap=True,
@@ -288,13 +319,34 @@ def perturb(atoms: Atoms,
             validate_structure=True,
             validate_coefficient=None,
             vol_pert_fraction=0.0,
+            sym_strain=False,
+            sym_strain_fraction=0.03,
+            sym_strain_crystal_system=None,
+            sym_strain_symprec=1e-2,
             similarity_threshold=0.999,
             **kwargs):
     """
     Generate perturbed structures.
     Merges functionality from legacy perturb and modern generator.
     """
-    
+    # Compatibility check (before any parameter normalization)
+    compatibility_warnings = validate_compatibility(
+        num=num, cell_pert_fraction=cell_pert_fraction, min_distance=min_distance,
+        mag_mode=mag_mode, mag_noise=mag_noise, rotate_formula=rotate_formula,
+        vac_elements=vac_elements, vac_num=vac_num,
+        antisite=antisite, antisite_pairs=antisite_pairs, antisite_num=antisite_num,
+        shuffle_elements=shuffle_elements, shuffle_method=shuffle_method,
+        surface=surface, gb=gb, dislocation=dislocation,
+        twinning=twinning, stacking_fault=stacking_fault,
+        amorphous=amorphous, sampler=sampler, rigid=rigid,
+        vol_pert_fraction=vol_pert_fraction,
+        sym_strain=sym_strain, sym_strain_fraction=sym_strain_fraction,
+        sym_strain_crystal_system=sym_strain_crystal_system,
+        **kwargs
+    )
+    for w in compatibility_warnings:
+        logger.warning(f"Compatibility: {w}")
+
     # Check if Sobol sampler is used
     use_sobol = (sampler == 'sobol')
     
@@ -355,11 +407,16 @@ def perturb(atoms: Atoms,
             mag_kwargs=mag_kwargs, mag_config=mag_config,
             rotate_formula=rotate_formula,
             vac_elements=vac_elements, vac_num=vac_num,
+            antisite=antisite, antisite_pairs=antisite_pairs, antisite_num=antisite_num,
             shuffle_elements=shuffle_elements, shuffle_method=shuffle_method,
             rigid=rigid, rigid_method=rigid_method, rigid_list=rigid_list,
             rigid_mode=rigid_mode, rigid_composition=rigid_composition,
             vol_pert_fraction=vol_pert_fraction,
             cell_pert_fraction=cell_pert_fraction,
+            sym_strain=sym_strain,
+            sym_strain_fraction=sym_strain_fraction,
+            sym_strain_crystal_system=sym_strain_crystal_system,
+            sym_strain_symprec=sym_strain_symprec,
         )
         # Unpack dimension info
         d_cell = dims['d_cell']
@@ -367,6 +424,7 @@ def perturb(atoms: Atoms,
         d_mag = dims['d_mag']
         d_rot = dims['d_rot']
         d_vac = dims['d_vac']
+        d_antisite = dims['d_antisite']
         d_shuf = dims['d_shuf']
         d_amorphous = dims['d_amorphous']
         d_dislocation = dims['d_dislocation']
@@ -374,6 +432,7 @@ def perturb(atoms: Atoms,
         d_twinning = dims['d_twinning']
         d_sf = dims['d_sf']
         d_surface = dims['d_surface']
+        d_sym_strain = dims.get('d_sym_strain', 0)
         d_vol = dims['d_vol']
         total_d = dims['total_d']
         d_gb_axis_dim = dims['d_gb_axis_dim']
@@ -423,6 +482,7 @@ def perturb(atoms: Atoms,
         sobol_batch_mag = None
         sobol_batch_rot = None
         sobol_batch_vac = None
+        sobol_batch_antisite = None
         sobol_batch_shuf = None
         sobol_batch_amorphous = None
         sobol_batch_dislocation = None
@@ -431,6 +491,7 @@ def perturb(atoms: Atoms,
         sobol_batch_sf = None
         sobol_batch_surface = None
         sobol_batch_vol = None
+        sobol_batch_sym_strain = None
         scaled_batch = None
         
         if use_sobol:
@@ -464,6 +525,13 @@ def perturb(atoms: Atoms,
             if d_vac > 0:
                 sobol_batch_vac = raw_samples[:, current_dim:current_dim+d_vac]
                 current_dim += d_vac
+            
+            # Antisite samples
+            if d_antisite > 0:
+                sobol_batch_antisite = raw_samples[:, current_dim:current_dim+d_antisite]
+                current_dim += d_antisite
+            else:
+                sobol_batch_antisite = None
             
             # Shuf samples
             if d_shuf > 0:
@@ -504,6 +572,13 @@ def perturb(atoms: Atoms,
             if d_vol > 0:
                 sobol_batch_vol = raw_samples[:, current_dim:current_dim+d_vol]
                 current_dim += d_vol
+
+            # Symmetry-preserving strain samples
+            if d_sym_strain > 0:
+                sobol_batch_sym_strain = raw_samples[:, current_dim:current_dim+d_sym_strain]
+                current_dim += d_sym_strain
+            else:
+                sobol_batch_sym_strain = None
 
         for i_local in range(batch_size):
             try:
@@ -904,89 +979,114 @@ def perturb(atoms: Atoms,
                  
                      struct = _safe_generate_amorphous(struct, min_dist=amorphous_min_dist, rattle_strength=amorphous_rattle, max_steps=amorphous_steps, rng_values=rng_amor)
                  
-                # 1. Cell Perturbation (Delayed)
-                rng_disp = None
-                if use_sobol:
-                    consumed_d += 9 # Cell (always consumed)
-                    strain_tensor = scaled_batch[i_local, :3]
-                
-                    # Generate Global Rotation if requested using unused cell dims (3-5)
-                    rotation = None
-                    if rotate_cell:
-                        # Use dims 3, 4, 5 from raw_samples (unscaled [0, 1])
-                        u = raw_samples[i_local, 3]
-                        v = raw_samples[i_local, 4]
-                    
-                        # Map to Sphere
-                        z = 2 * u - 1
-                        r = np.sqrt(max(0, 1 - z*z))
-                        theta_ang = 2 * np.pi * v
-                        axis = np.array([r * np.cos(theta_ang), r * np.sin(theta_ang), z])
-                        angle = raw_samples[i_local, 5] * 360.0
-                        rotation = (axis, angle)
-                
-                    # Consume displacement dims to keep Sobol sync, but only use if topology not modified
-                    _rng_disp_sobol = sobol_batch_disp[i_local]
-                    consumed_d += d_disp
-                
-                    if not topology_modified:
-                        rng_disp = _rng_disp_sobol
-                    else:
-                        rng_disp = None # Fallback to random thermal noise if topology changed size
-                
-                    if rigid:
-                        if rigid_manager:
-                             # Warning: Rigid manager IDs match INITIAL atoms.
-                             # If topology modified, IDs are invalid!
-                             if not topology_modified:
-                                struct.set_array('rigid_id', rigid_manager.ids)
-                             else:
-                                # Cannot use rigid model on modified topology easily?
-                                # Fallback to non-rigid strain or try to re-detect?
-                                # For GB/Dislocation, rigid body assumption might break anyway.
-                                # We'll skip setting rigid_id and let it fail or default?
-                                pass
-                    
-                        # If topology modified, rigid mode might fail if it relies on 'rigid_id'.
-                        # We'll assume user knows what they are doing or fallback to simple strain if rigid fails?
-                        # generate_rigid_perturbed_structure checks for rigid_id.
-                        if topology_modified:
-                            # Fallback to standard strain?
-                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
-                        else:
-                            struct = generate_rigid_perturbed_structure(struct, 
-                                                                        mode=rigid_mode,
-                                                                        strain_lim=[-cell_pert_fraction, cell_pert_fraction],
-                                                                        min_distance=min_distance,
-                                                                        strain_tensor=strain_tensor,
-                                                                        rng_values=rng_disp)
-                    else:
-                        struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
-                else:
-                    rotation = None
-                    if rotate_cell:
-                         # Random rotation
-                         axis = np.random.normal(size=3)
-                         axis /= np.linalg.norm(axis)
-                         angle = np.random.uniform(0, 360)
-                         rotation = (axis, angle)
+                # 0. Symmetry-preserving strain (replaces cell perturbation when enabled)
+                if sym_strain:
+                    rng_ss = None
+                    if use_sobol and sobol_batch_sym_strain is not None:
+                        rng_ss = sobol_batch_sym_strain[i_local]
+                        consumed_d += d_sym_strain
 
-                    if not skip_normal:
-                         if rigid:
-                            if rigid_manager and not topology_modified:
-                                 struct.set_array('rigid_id', rigid_manager.ids)
-                        
+                    struct, ss_meta = generate_symmetry_preserving_strain(
+                        struct,
+                        strain_fraction=sym_strain_fraction,
+                        crystal_system=sym_strain_crystal_system,
+                        symprec=sym_strain_symprec,
+                        rng_values=rng_ss,
+                        min_distance=min_distance,
+                    )
+                    if 'perturb_annotation' not in struct.info:
+                        struct.info['perturb_annotation'] = {}
+                    struct.info['perturb_annotation']['sym_strain'] = ss_meta
+
+                    # Consume displacement dims to keep Sobol sync
+                    if use_sobol:
+                        consumed_d += d_disp
+
+                if not sym_strain:
+                    # 1. Cell Perturbation (Delayed)
+                    rng_disp = None
+                    if use_sobol:
+                        consumed_d += 9 # Cell (always consumed)
+                        strain_tensor = scaled_batch[i_local, :3]
+
+                        # Generate Global Rotation if requested using unused cell dims (3-5)
+                        rotation = None
+                        if rotate_cell:
+                            # Use dims 3, 4, 5 from raw_samples (unscaled [0, 1])
+                            u = raw_samples[i_local, 3]
+                            v = raw_samples[i_local, 4]
+
+                            # Map to Sphere
+                            z = 2 * u - 1
+                            r = np.sqrt(max(0, 1 - z*z))
+                            theta_ang = 2 * np.pi * v
+                            axis = np.array([r * np.cos(theta_ang), r * np.sin(theta_ang), z])
+                            angle = raw_samples[i_local, 5] * 360.0
+                            rotation = (axis, angle)
+
+                        # Consume displacement dims to keep Sobol sync, but only use if topology not modified
+                        _rng_disp_sobol = sobol_batch_disp[i_local]
+                        consumed_d += d_disp
+
+                        if not topology_modified:
+                            rng_disp = _rng_disp_sobol
+                        else:
+                            rng_disp = None # Fallback to random thermal noise if topology changed size
+
+                        if rigid:
+                            if rigid_manager:
+                                 # Warning: Rigid manager IDs match INITIAL atoms.
+                                 # If topology modified, IDs are invalid!
+                                 if not topology_modified:
+                                    struct.set_array('rigid_id', rigid_manager.ids)
+                                 else:
+                                    # Cannot use rigid model on modified topology easily?
+                                    # Fallback to non-rigid strain or try to re-detect?
+                                    # For GB/Dislocation, rigid body assumption might break anyway.
+                                    # We'll skip setting rigid_id and let it fail or default?
+                                    pass
+
+                            # If topology modified, rigid mode might fail if it relies on 'rigid_id'.
+                            # We'll assume user knows what they are doing or fallback to simple strain if rigid fails?
+                            # generate_rigid_perturbed_structure checks for rigid_id.
                             if topology_modified:
-                                struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+                                # Fallback to standard strain?
+                                struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
                             else:
                                 struct = generate_rigid_perturbed_structure(struct, 
                                                                             mode=rigid_mode,
                                                                             strain_lim=[-cell_pert_fraction, cell_pert_fraction],
                                                                             min_distance=min_distance,
-                                                                            rng_values=None)
-                         else:
-                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
-                 
+                                                                            strain_tensor=strain_tensor,
+                                                                            rng_values=rng_disp)
+                        else:
+                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
+                    else:
+                        rotation = None
+                        if rotate_cell:
+                             # Random rotation
+                             axis = np.random.normal(size=3)
+                             axis /= np.linalg.norm(axis)
+                             angle = np.random.uniform(0, 360)
+                             rotation = (axis, angle)
+
+                        if not skip_normal:
+                             if rigid:
+                                if rigid_manager and not topology_modified:
+                                     struct.set_array('rigid_id', rigid_manager.ids)
+
+                                if topology_modified:
+                                    struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+                                else:
+                                    struct = generate_rigid_perturbed_structure(struct, 
+                                                                                mode=rigid_mode,
+                                                                                strain_lim=[-cell_pert_fraction, cell_pert_fraction],
+                                                                                min_distance=min_distance,
+                                                                                rng_values=None)
+                             else:
+                                struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+
+
                 # 3. Magnetic Perturbation
                 if mag_mode:
                     # Backup existing annotation if it's topological
@@ -1049,6 +1149,23 @@ def perturb(atoms: Atoms,
                             raise ValueError(f"Sobol dimension mismatch in Vacancy Generation: {e}. This may happen if atom count changed due to topology defects.") from e
                         raise
                 
+                # 5.5 Antisite
+                if antisite and antisite_pairs:
+                    topology_modified = True
+                    rng_as = None
+                    if use_sobol and d_antisite > 0:
+                        rng_as = sobol_batch_antisite[i_local]
+                        consumed_d += d_antisite
+                    
+                    parsed_as_pairs = _parse_antisite_pairs(antisite_pairs)
+                    struct, as_meta = generate_antisite_defects(
+                        struct, swap_pairs=parsed_as_pairs, num_swaps=antisite_num,
+                        mode=antisite_mode, rng_values=rng_as, symprec=antisite_symprec,
+                    )
+                    if 'perturb_annotation' not in struct.info:
+                        struct.info['perturb_annotation'] = {}
+                    struct.info['perturb_annotation']['antisite'] = as_meta
+                
                 # 6. Shuffle
                 if shuffle_elements:
                     rng_shuf = None
@@ -1063,20 +1180,6 @@ def perturb(atoms: Atoms,
                          if "Not enough random values" in str(e):
                              raise ValueError(f"Sobol dimension mismatch in Shuffle: {e}. This may happen if atom count changed due to topology defects.") from e
                          raise
-
-                # 7. Volume Scaling
-                if vol_pert_fraction > 0:
-                    if use_sobol:
-                        v_scale = 1.0 + (sobol_batch_vol[i_local][0] - 0.5) * 2 * vol_pert_fraction
-                        consumed_d += 1
-                    else:
-                        v_scale = 1.0 + (np.random.uniform(0, 1) - 0.5) * 2 * vol_pert_fraction
-                
-                    struct.set_cell(struct.get_cell() * v_scale, scale_atoms=True)
-                    if 'perturb_annotation' in struct.info:
-                        if 'metadata' not in struct.info['perturb_annotation']:
-                            struct.info['perturb_annotation']['metadata'] = {}
-                        struct.info['perturb_annotation']['metadata']['vol_scale'] = v_scale
 
                 if use_sobol:
                     assert consumed_d == total_d, f"Strict dimension checking failed! Consumed {consumed_d} but allocated {total_d} dimensions."
@@ -1131,6 +1234,7 @@ def perturb(atoms: Atoms,
                 # Isotropic Volume Scaling (Super-Coverage Feature #2)
                 if vol_pert_fraction > 0:
                     if use_sobol and sobol_batch_vol is not None:
+                        consumed_d += 1
                         v_val = sobol_batch_vol[i_local][0] # Use the single dimension for volume
                         # Scale v_val [0, 1] to [-vol_pert_fraction, vol_pert_fraction]
                         # V' = V * (1 + delta) where delta is in [-f, f]
