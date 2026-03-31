@@ -161,6 +161,12 @@ def generate_deformed_structure(prim: Atoms, strain_lim: List[float], min_distan
     # If we want F applied to basis vectors.
     new_cell = np.dot(cell, deformation.T)
     
+    # Protect against negative/zero cell volume
+    vol = abs(np.linalg.det(new_cell))
+    if vol < 1e-10:
+        logger.warning("Deformation resulted in near-zero cell volume, using original cell")
+        new_cell = cell.copy()
+    
     atoms.set_cell(new_cell, scale_atoms=True)
     atoms = perturb_position(atoms, min_distance)
     return atoms
@@ -206,6 +212,13 @@ def generate_strained_structure(prim: Atoms, strain_lim: List[float], min_distan
     
     # new_cell = cell @ deformation.T (ASE row vectors)
     new_cell = np.dot(cell, deformation.T)
+    
+    # Protect against negative/zero cell volume
+    vol = abs(np.linalg.det(new_cell))
+    if vol < 1e-10:
+        logger.warning("Strain resulted in near-zero cell volume, using original cell")
+        new_cell = cell.copy()
+    
     atoms.set_cell(new_cell, scale_atoms=True)
     
     # Apply global rotation if provided
@@ -493,687 +506,701 @@ def perturb(atoms: Atoms,
                 current_dim += d_vol
 
         for i_local in range(batch_size):
-            i_global = start_batch + i_local
-            consumed_d = 0
+            try:
+                i_global = start_batch + i_local
+                consumed_d = 0
 
             
-            # For progress tracking, we might want to manually update or just print
-            # Using rich track inside a loop is tricky if not the main iterator.
-            # But let's assume we just iterate.
+                # For progress tracking, we might want to manually update or just print
+                # Using rich track inside a loop is tricky if not the main iterator.
+                # But let's assume we just iterate.
             
-            struct = atoms.copy()
+                struct = atoms.copy()
             
-            # Initialize topology_modified flag
-            topology_modified = False
+                # Initialize topology_modified flag
+                topology_modified = False
             
-            # 2. Topology (Surface, GB, etc)
-            if surface:
-                 topology_modified = True
-                 curr_vac = surf_vac_min
-                 curr_lay = surf_lay_min
+                # 2. Topology (Surface, GB, etc)
+                if surface:
+                     topology_modified = True
+                     curr_vac = surf_vac_min
+                     curr_lay = surf_lay_min
                  
-                 if use_sobol and sobol_batch_surface is not None:
-                     consumed_d += d_surface
-                     idx = 0
-                     raw_surf = sobol_batch_surface[i_local]
+                     if use_sobol and sobol_batch_surface is not None:
+                         consumed_d += d_surface
+                         idx = 0
+                         raw_surf = sobol_batch_surface[i_local]
                      
-                     if surf_vac_is_range:
-                         val = raw_surf[idx]
-                         curr_vac = surf_vac_min + val * (surf_vac_max - surf_vac_min)
-                         idx += 1
+                         if surf_vac_is_range:
+                             val = raw_surf[idx]
+                             curr_vac = surf_vac_min + val * (surf_vac_max - surf_vac_min)
+                             idx += 1
                          
-                     if surf_lay_is_range:
-                         val = raw_surf[idx]
-                         n_opts = surf_lay_max - surf_lay_min + 1
-                         int_off = int(val * n_opts)
-                         if int_off == n_opts: int_off -= 1
-                         curr_lay = surf_lay_min + int_off
-                         idx += 1
+                         if surf_lay_is_range:
+                             val = raw_surf[idx]
+                             n_opts = surf_lay_max - surf_lay_min + 1
+                             int_off = int(val * n_opts)
+                             if int_off == n_opts: int_off -= 1
+                             curr_lay = surf_lay_min + int_off
+                             idx += 1
                  
-                 elif surf_vac_is_range or surf_lay_is_range:
-                     # Random sampler
-                     if surf_vac_is_range:
-                         curr_vac = np.random.uniform(surf_vac_min, surf_vac_max)
-                     if surf_lay_is_range:
-                         curr_lay = np.random.randint(surf_lay_min, surf_lay_max + 1)
+                     elif surf_vac_is_range or surf_lay_is_range:
+                         # Random sampler
+                         if surf_vac_is_range:
+                             curr_vac = np.random.uniform(surf_vac_min, surf_vac_max)
+                         if surf_lay_is_range:
+                             curr_lay = np.random.randint(surf_lay_min, surf_lay_max + 1)
 
-                 struct = generate_surface(struct, indices=surface_indices, vacuum=curr_vac, layers=curr_lay)
-                 struct.info['perturb_annotation'] = {
-                     'type': 'surface',
-                     'metadata': {
-                         'indices': surface_indices,
-                         'vacuum': curr_vac,
-                         'layers': curr_lay
-                     }
-                 }
-
-            if gb:
-                 topology_modified = True
-                 curr_angle = gb_angle
-                 curr_sigma = None
-                 curr_trans = None
-                 
-                 # 1. Determine Axis
-                 gb_axis_vec = gb_axis
-                 # If random, we will pick later. But if not random, parse it.
-                 if gb_axis != 'random':
-                     if isinstance(gb_axis, str):
-                         if ',' in gb_axis:
-                             try:
-                                gb_axis_vec = [float(x) for x in gb_axis.split(',')]
-                             except:
-                                pass
-                     elif isinstance(gb_axis, (list, tuple, np.ndarray)):
-                         try:
-                            gb_axis_vec = [float(x) for x in gb_axis]
-                         except:
-                            pass
-                 else:
-                     # Default placeholder if random but not using sobol (handled later)
-                     gb_axis_vec = [0,0,1]
-
-                 if use_sobol and sobol_batch_gb is not None:
-                     consumed_d += d_gb
-                     raw_gb = sobol_batch_gb[i_local]
-                     
-                     # Indices in raw_gb:
-                     # 0, 1: Translation (always)
-                     # 2: Axis (if d_gb_axis_dim == 1)
-                     # 2+d_gb_axis_dim: Angle (if d_gb_angle_dim == 1)
-                     
-                     # 1. Translation
-                     t_frac_x = raw_gb[0]
-                     t_frac_y = raw_gb[1]
-                     # Convert to Cartesian later or pass fractional
-                     curr_trans_frac = (t_frac_x, t_frac_y)
-                     
-                     # 2. Axis
-                     if d_gb_axis_dim == 1:
-                         axis_u = raw_gb[2]
-                         all_axes = generate_integer_axes(max_index=3)
-                         a_idx = int(axis_u * len(all_axes))
-                         if a_idx == len(all_axes): a_idx -= 1
-                         gb_axis_vec = all_axes[a_idx]
-                     
-                     # 3. Angle / Sigma
-                     angle_ptr = 2 + d_gb_axis_dim
-                     
-                     if d_gb_angle_dim == 1:
-                         angle_u = raw_gb[angle_ptr]
-                         
-                         if gb_angle == 'random':
-                             # Map [0, 1] to [15, 90] degrees
-                             curr_angle = 15.0 + angle_u * (90.0 - 15.0)
-                         elif gb_angle_is_range:
-                             curr_angle = gb_angle_min + angle_u * (gb_angle_max - gb_angle_min)
-                         elif gb_angle == 'csl':
-                             idx_val = angle_u
-                             csl_data = get_csl_data(gb_axis_vec)
-                             if csl_data:
-                                 c_idx = int(idx_val * len(csl_data))
-                                 if c_idx == len(csl_data): c_idx -= 1
-                                 curr_angle = csl_data[c_idx]['angle']
-                                 curr_sigma = csl_data[c_idx]['sigma']
-                             else:
-                                 curr_angle = 36.87
-                     
-                     # 4. Dist / Overlap
-                     ptr = 2 + d_gb_axis_dim + d_gb_angle_dim
-                     
-                     curr_gb_dist = gb_dist_min
-                     curr_gb_overlap = gb_overlap_min
-                     
-                     if gb_dist_is_range:
-                         curr_gb_dist = gb_dist_min + raw_gb[ptr] * (gb_dist_max - gb_dist_min)
-                         ptr += 1
-                     if gb_overlap_is_range:
-                         curr_gb_overlap = gb_overlap_min + raw_gb[ptr] * (gb_overlap_max - gb_overlap_min)
-                         ptr += 1
-
-                 else: 
-                     # Non-sobol random sampling
-                     # 1. Axis
-                     if gb_axis == 'random':
-                         all_axes = generate_integer_axes(max_index=3)
-                         gb_axis_vec = all_axes[np.random.randint(len(all_axes))]
-                     
-                     # 2. Angle
-                     if gb_angle == 'random':
-                          curr_angle = np.random.uniform(15.0, 90.0)
-                     elif gb_angle_is_range:
-                          curr_angle = np.random.uniform(gb_angle_min, gb_angle_max)
-                     elif gb_angle == 'csl':
-                          csl_data = get_csl_data(gb_axis_vec)
-                          if csl_data:
-                              c_idx = np.random.randint(len(csl_data))
-                              curr_angle = csl_data[c_idx]['angle']
-                              curr_sigma = csl_data[c_idx]['sigma']
-                          else:
-                              curr_angle = 36.87
-                     elif isinstance(curr_angle, str):
-                          pass                 
-
-                     # 3. Dist / Overlap
-                     curr_gb_dist = gb_dist_min
-                     curr_gb_overlap = gb_overlap_min
-                     
-                     if gb_dist_is_range:
-                         curr_gb_dist = np.random.uniform(gb_dist_min, gb_dist_max)
-                     if gb_overlap_is_range:
-                         curr_gb_overlap = np.random.uniform(gb_overlap_min, gb_overlap_max)
-                         
-                     # 4. Translation (Random if not provided)
-                     # Handled below
-                     curr_trans_frac = tuple(np.random.uniform(0, 1, 2))
-
-                 # Dispatch based on method
-                 curr_trans = None
-                 
-                 # Check kwargs first (explicit config overrides random unless sobol used)
-                 # Wait, if sobol used, we already set curr_trans_frac.
-                 # If non-sobol, we set random curr_trans_frac above.
-                 # But if user provided explicit translation in kwargs, we should respect it if not sampling?
-                 # But 'random' implies sampling.
-                 
-                 if 'translation' in kwargs:
-                     curr_trans = kwargs['translation']
-                     curr_trans_frac = None # Override fractional
-                 if 'translation_frac' in kwargs:
-                     curr_trans_frac = kwargs['translation_frac']
-
-                 # Sobol overrides everything if active
-                 if use_sobol and sobol_batch_gb is not None:
-                      # We set curr_trans_frac above
-                      curr_trans = None 
-                 
-                 # Call unified generate_grain_boundary
-                 try:
-                    struct = generate_grain_boundary(struct, axis=gb_axis_vec, angle_deg=curr_angle, min_dist=curr_gb_overlap, vacuum=curr_gb_dist, translation=curr_trans, translation_frac=curr_trans_frac, sigma=curr_sigma)
-                 except Exception as e:
-                    if "Sigma" in str(e):
-                         # Fallback or re-raise
-                         logger.warning(f"CSL generation failed for {curr_angle} (Sigma {curr_sigma}), trying simple rotation. Error: {e}")
-                         struct = generate_grain_boundary(struct, axis=gb_axis_vec, angle_deg=curr_angle, min_dist=curr_gb_overlap, vacuum=curr_gb_dist, translation=curr_trans, translation_frac=curr_trans_frac, sigma=None)
-                    else:
-                         raise
-                 
-                 # Annotation (Unified)
-                 if 'perturb_annotation' not in struct.info:
-                      struct.info['perturb_annotation'] = {}
-                 struct.info['perturb_annotation']['type'] = 'grain_boundary'
-                 if curr_sigma is not None:
-                      struct.info['perturb_annotation']['sigma'] = curr_sigma
-            if dislocation:
-                 topology_modified = True
-                 curr_type = dislocation_type
-                 curr_center = None
-                 
-                 # Use the already normalized axis index
-                 d_axis_idx = dislocation_axis if isinstance(dislocation_axis, (int, np.integer)) else 2
-                 
-                 if use_sobol and sobol_batch_dislocation is not None:
-                     consumed_d += d_dislocation
-                     
-                     raw_d = sobol_batch_dislocation[i_local]
-                     # center dims are first 2
-                     c_frac = raw_d[:2]
-                     
-                     # Calculate center based on axis
-                     cell_diag = struct.cell.lengths()
-                     
-                     if d_axis_idx == 0: # X axis, center in YZ
-                         curr_center = [cell_diag[0]/2, c_frac[0]*cell_diag[1], c_frac[1]*cell_diag[2]]
-                     elif d_axis_idx == 1: # Y axis, center in XZ
-                         curr_center = [c_frac[0]*cell_diag[0], cell_diag[1]/2, c_frac[1]*cell_diag[2]]
-                     else: # Z axis (2), center in XY
-                         curr_center = [c_frac[0]*cell_diag[0], c_frac[1]*cell_diag[1], cell_diag[2]/2]
-                     
-                     if dislocation_type == 'random':
-                         # type dim is index 2
-                         if raw_d[2] < 0.5:
-                             curr_type = 'edge'
-                         else:
-                             curr_type = 'screw'
-                 
-                 # If random sampler, ensure curr_center is set (default to center of cell)
-                 if curr_center is None:
-                    curr_center = struct.get_cell().sum(axis=0) / 2
-                    
-                 struct = generate_dislocation(struct, type=curr_type, axis=d_axis_idx, burgers=dislocation_burgers, center=curr_center)
-
-                 struct.info['perturb_annotation'] = {
-                     'type': 'dislocation',
-                     'metadata': {
-                         'dislocation_type': curr_type,
-                         'axis': dislocation_axis,
-                         'burgers': dislocation_burgers_input,
-                         'center': curr_center
-                     }
-                 }
-            if twinning:
-                 topology_modified = True
-                 curr_trans_frac = None
-                 curr_trans = None
-                 
-                 # Check kwargs first
-                 if 'translation' in kwargs:
-                     curr_trans = kwargs['translation']
-                 if 'translation_frac' in kwargs:
-                     curr_trans_frac = kwargs['translation_frac']
-
-                 if use_sobol and sobol_batch_twinning is not None:
-                     consumed_d += d_twinning
-                     raw_tw = sobol_batch_twinning[i_local]
-                     # First 2 dims are translation
-                     curr_trans_frac = [raw_tw[0], raw_tw[1]]
-                     curr_trans = None
-                 elif curr_trans is None and curr_trans_frac is None:
-                     # Random translation if nothing specified, to match GB behavior
-                     curr_trans_frac = tuple(np.random.uniform(0, 1, 2))
-
-                 # Apply Twinning
-                 # z_frac is ignored in new implementation which builds a symmetric slab
-                 struct = generate_twinning(struct, miller_indices=twinning_indices, min_dist=twinning_min_dist, translation=curr_trans, translation_frac=curr_trans_frac)
-                 
-                 twin_normal_cart = [0.0, 0.0, 1.0]
-                 # d is roughly half cell height for symmetric slab
-                 twin_d = 0.5 * struct.cell[2, 2]
-
-                 # Merge with existing annotation if present
-                 if 'perturb_annotation' in struct.info:
-                     ann = struct.info['perturb_annotation']
-                     if 'metadata' not in ann: ann['metadata'] = {}
-                     ann['metadata'].update({
-                         'indices': twinning_indices,
-                         'translation_frac': curr_trans_frac,
-                         'normal_cart': twin_normal_cart,
-                         'plane_d': twin_d
-                     })
-                 else:
+                     struct = _safe_generate_surface(struct, indices=surface_indices, vacuum=curr_vac, layers=curr_lay)
                      struct.info['perturb_annotation'] = {
-                         'type': 'twinning',
+                         'type': 'surface',
                          'metadata': {
-                             'indices': twinning_indices,
-                             'translation_frac': curr_trans_frac,
-                             'normal_cart': twin_normal_cart, # For plotting
-                             'plane_d': twin_d # For plotting
+                             'indices': surface_indices,
+                             'vacuum': curr_vac,
+                             'layers': curr_lay
                          }
                      }
-            if stacking_fault:
-                 topology_modified = True
-                 curr_sf_s = sf_shift
-                 curr_sf_h = sf_height
-                 curr_trans_frac = None
+
+                if gb:
+                     topology_modified = True
+                     curr_angle = gb_angle
+                     curr_sigma = None
+                     curr_trans = None
                  
-                 if use_sobol and sobol_batch_sf is not None:
-                     consumed_d += d_sf
-                     raw_sf = sobol_batch_sf[i_local]
-                     idx = 0
-                     
-                     if sf_shift == 'random':
-                         curr_trans_frac = [raw_sf[idx], raw_sf[idx+1]]
-                         curr_sf_s = [0.0, 0.0, 0.0]
-                         idx += 2
+                     # 1. Determine Axis
+                     gb_axis_vec = gb_axis
+                     # If random, we will pick later. But if not random, parse it.
+                     if gb_axis != 'random':
+                         if isinstance(gb_axis, str):
+                             if ',' in gb_axis:
+                                 try:
+                                    gb_axis_vec = [float(x) for x in gb_axis.split(',')]
+                                 except (ValueError, AttributeError) as e:
+                                    logger.warning(f"Failed to parse gb_axis '{gb_axis}': {e}, using default [0,0,1]")
+                                    gb_axis_vec = [0, 0, 1]
+                         elif isinstance(gb_axis, (list, tuple, np.ndarray)):
+                             try:
+                                gb_axis_vec = [float(x) for x in gb_axis]
+                             except (ValueError, TypeError) as e:
+                                logger.warning(f"Failed to parse gb_axis list '{gb_axis}': {e}, using default [0,0,1]")
+                                gb_axis_vec = [0, 0, 1]
                      else:
-                         # Use explicit shift
-                         pass
-                         
-                     if sf_height == 'random':
-                         # Map [0, 1] to [0.1, 0.9]
-                         curr_sf_h = 0.1 + raw_sf[idx] * 0.8
-                
-                 else:
-                     # Random Sampler Logic
-                     if sf_shift == 'random':
-                         curr_trans_frac = np.random.uniform(0, 1, 2)
-                         curr_sf_s = [0.0, 0.0, 0.0]
-                         
-                     if sf_height == 'random':
-                         curr_sf_h = np.random.uniform(0.1, 0.9)
+                         # Default placeholder if random but not using sobol (handled later)
+                         gb_axis_vec = [0,0,1]
+
+                     if use_sobol and sobol_batch_gb is not None:
+                         consumed_d += d_gb
+                         raw_gb = sobol_batch_gb[i_local]
                      
-                 struct = generate_stacking_fault(struct, plane_normal=sf_normal, shift_vector=curr_sf_s, plane_height_frac=curr_sf_h, translation_frac=curr_trans_frac, min_dist=sf_min_dist)
-                 
-                 # Retrieve actual shift vector (including extra_shift from translation_frac)
-                 # stored by generate_stacking_fault in 'shift_vector' or 'metadata'
-                 actual_shift = curr_sf_s
-                 if 'perturb_annotation' in struct.info:
-                     ann = struct.info['perturb_annotation']
-                     if 'shift_vector' in ann:
-                         actual_shift = ann['shift_vector']
-                     elif 'metadata' in ann and 'input_shift' in ann['metadata']:
-                         # generate_stacking_fault stores 'shift_vector' at top level
-                         pass
+                         # Indices in raw_gb:
+                         # 0, 1: Translation (always)
+                         # 2: Axis (if d_gb_axis_dim == 1)
+                         # 2+d_gb_axis_dim: Angle (if d_gb_angle_dim == 1)
+                     
+                         # 1. Translation
+                         t_frac_x = raw_gb[0]
+                         t_frac_y = raw_gb[1]
+                         # Convert to Cartesian later or pass fractional
+                         curr_trans_frac = (t_frac_x, t_frac_y)
+                     
+                         # 2. Axis
+                         if d_gb_axis_dim == 1:
+                             axis_u = raw_gb[2]
+                             all_axes = generate_integer_axes(max_index=3)
+                             a_idx = int(axis_u * len(all_axes))
+                             if a_idx == len(all_axes): a_idx -= 1
+                             gb_axis_vec = all_axes[a_idx]
+                     
+                         # 3. Angle / Sigma
+                         angle_ptr = 2 + d_gb_axis_dim
+                     
+                         if d_gb_angle_dim == 1:
+                             angle_u = raw_gb[angle_ptr]
+                         
+                             if gb_angle == 'random':
+                                 # Map [0, 1] to [15, 90] degrees
+                                 curr_angle = 15.0 + angle_u * (90.0 - 15.0)
+                             elif gb_angle_is_range:
+                                 curr_angle = gb_angle_min + angle_u * (gb_angle_max - gb_angle_min)
+                             elif gb_angle == 'csl':
+                                 idx_val = angle_u
+                                 csl_data = get_csl_data(gb_axis_vec)
+                                 if csl_data:
+                                     c_idx = int(idx_val * len(csl_data))
+                                     if c_idx == len(csl_data): c_idx -= 1
+                                     curr_angle = csl_data[c_idx]['angle']
+                                     curr_sigma = csl_data[c_idx]['sigma']
+                                 else:
+                                     curr_angle = 36.87
+                     
+                         # 4. Dist / Overlap
+                         ptr = 2 + d_gb_axis_dim + d_gb_angle_dim
+                     
+                         curr_gb_dist = gb_dist_min
+                         curr_gb_overlap = gb_overlap_min
+                     
+                         if gb_dist_is_range:
+                             curr_gb_dist = gb_dist_min + raw_gb[ptr] * (gb_dist_max - gb_dist_min)
+                             ptr += 1
+                         if gb_overlap_is_range:
+                             curr_gb_overlap = gb_overlap_min + raw_gb[ptr] * (gb_overlap_max - gb_overlap_min)
+                             ptr += 1
 
-                # Calculate Cartesian height for plotting
-                 # Logic matches generate_stacking_fault: proj range
-                 # But we need the normal first
-                 # Handle Miller indices if needed
-                 sf_normal_cart = np.array(sf_normal, dtype=float)
-                 if all(isinstance(x, (int, np.integer)) for x in sf_normal):
-                     reciprocal_cell = struct.cell.reciprocal()
-                     sf_normal_cart = np.dot(sf_normal, reciprocal_cell)
-                 
-                 sf_norm = np.linalg.norm(sf_normal_cart)
-                 if sf_norm > 1e-8:
-                     sf_normal_cart /= sf_norm
-                 
-                 # Estimate plane constant d (height)
-                 # We need atom positions to find range
-                 positions = struct.get_positions()
-                 projections = np.dot(positions, sf_normal_cart)
-                 min_proj, max_proj = np.min(projections), np.max(projections)
-                 plane_d = min_proj + curr_sf_h * (max_proj - min_proj)
+                     else: 
+                         # Non-sobol random sampling
+                         # 1. Axis
+                         if gb_axis == 'random':
+                             all_axes = generate_integer_axes(max_index=3)
+                             gb_axis_vec = all_axes[np.random.randint(len(all_axes))]
+                     
+                         # 2. Angle
+                         if gb_angle == 'random':
+                              curr_angle = np.random.uniform(15.0, 90.0)
+                         elif gb_angle_is_range:
+                              curr_angle = np.random.uniform(gb_angle_min, gb_angle_max)
+                         elif gb_angle == 'csl':
+                              csl_data = get_csl_data(gb_axis_vec)
+                              if csl_data:
+                                  c_idx = np.random.randint(len(csl_data))
+                                  curr_angle = csl_data[c_idx]['angle']
+                                  curr_sigma = csl_data[c_idx]['sigma']
+                              else:
+                                  curr_angle = 36.87
+                         elif isinstance(curr_angle, str):
+                              pass                 
 
-                 struct.info['perturb_annotation'] = {
-                     'type': 'stacking_fault',
-                     'metadata': {
-                         'normal': sf_normal, # Keep original for reference
-                         'normal_cart': sf_normal_cart, # Add Cartesian for plotting
-                         'shift': actual_shift,
-                         'height': curr_sf_h, # Fractional
-                         'plane_d': plane_d, # Cartesian plane constant for plotting
-                         'translation_frac': curr_trans_frac
+                         # 3. Dist / Overlap
+                         curr_gb_dist = gb_dist_min
+                         curr_gb_overlap = gb_overlap_min
+                     
+                         if gb_dist_is_range:
+                             curr_gb_dist = np.random.uniform(gb_dist_min, gb_dist_max)
+                         if gb_overlap_is_range:
+                             curr_gb_overlap = np.random.uniform(gb_overlap_min, gb_overlap_max)
+                         
+                         # 4. Translation (Random if not provided)
+                         # Handled below
+                         curr_trans_frac = tuple(np.random.uniform(0, 1, 2))
+
+                     # Dispatch based on method
+                     curr_trans = None
+                 
+                     # Check kwargs first (explicit config overrides random unless sobol used)
+                     # Wait, if sobol used, we already set curr_trans_frac.
+                     # If non-sobol, we set random curr_trans_frac above.
+                     # But if user provided explicit translation in kwargs, we should respect it if not sampling?
+                     # But 'random' implies sampling.
+                 
+                     if 'translation' in kwargs:
+                         curr_trans = kwargs['translation']
+                         curr_trans_frac = None # Override fractional
+                     if 'translation_frac' in kwargs:
+                         curr_trans_frac = kwargs['translation_frac']
+
+                     # Sobol overrides everything if active
+                     if use_sobol and sobol_batch_gb is not None:
+                          # We set curr_trans_frac above
+                          curr_trans = None 
+                 
+                     # Call unified generate_grain_boundary
+                     try:
+                        struct = _safe_generate_grain_boundary(struct, axis=gb_axis_vec, angle_deg=curr_angle, min_dist=curr_gb_overlap, vacuum=curr_gb_dist, translation=curr_trans, translation_frac=curr_trans_frac, sigma=curr_sigma)
+                     except Exception as e:
+                        if "Sigma" in str(e):
+                             # Fallback or re-raise
+                             logger.warning(f"CSL generation failed for {curr_angle} (Sigma {curr_sigma}), trying simple rotation. Error: {e}")
+                             struct = _safe_generate_grain_boundary(struct, axis=gb_axis_vec, angle_deg=curr_angle, min_dist=curr_gb_overlap, vacuum=curr_gb_dist, translation=curr_trans, translation_frac=curr_trans_frac, sigma=None)
+                        else:
+                             raise
+                 
+                     # Annotation (Unified)
+                     if 'perturb_annotation' not in struct.info:
+                          struct.info['perturb_annotation'] = {}
+                     struct.info['perturb_annotation']['type'] = 'grain_boundary'
+                     if curr_sigma is not None:
+                          struct.info['perturb_annotation']['sigma'] = curr_sigma
+                if dislocation:
+                     topology_modified = True
+                     curr_type = dislocation_type
+                     curr_center = None
+                 
+                     # Use the already normalized axis index
+                     d_axis_idx = dislocation_axis if isinstance(dislocation_axis, (int, np.integer)) else 2
+                 
+                     if use_sobol and sobol_batch_dislocation is not None:
+                         consumed_d += d_dislocation
+                     
+                         raw_d = sobol_batch_dislocation[i_local]
+                         # center dims are first 2
+                         c_frac = raw_d[:2]
+                     
+                         # Calculate center based on axis
+                         cell_diag = struct.cell.lengths()
+                     
+                         if d_axis_idx == 0: # X axis, center in YZ
+                             curr_center = [cell_diag[0]/2, c_frac[0]*cell_diag[1], c_frac[1]*cell_diag[2]]
+                         elif d_axis_idx == 1: # Y axis, center in XZ
+                             curr_center = [c_frac[0]*cell_diag[0], cell_diag[1]/2, c_frac[1]*cell_diag[2]]
+                         else: # Z axis (2), center in XY
+                             curr_center = [c_frac[0]*cell_diag[0], c_frac[1]*cell_diag[1], cell_diag[2]/2]
+                     
+                         if dislocation_type == 'random':
+                             # type dim is index 2
+                             if raw_d[2] < 0.5:
+                                 curr_type = 'edge'
+                             else:
+                                 curr_type = 'screw'
+                 
+                     # If random sampler, ensure curr_center is set (default to center of cell)
+                     if curr_center is None:
+                        curr_center = struct.get_cell().sum(axis=0) / 2
+                    
+                     struct = _safe_generate_dislocation(struct, type=curr_type, axis=d_axis_idx, burgers=dislocation_burgers, center=curr_center)
+
+                     struct.info['perturb_annotation'] = {
+                         'type': 'dislocation',
+                         'metadata': {
+                             'dislocation_type': curr_type,
+                             'axis': dislocation_axis,
+                             'burgers': dislocation_burgers_input,
+                             'center': curr_center
+                         }
                      }
-                 }
+                if twinning:
+                     topology_modified = True
+                     curr_trans_frac = None
+                     curr_trans = None
+                 
+                     # Check kwargs first
+                     if 'translation' in kwargs:
+                         curr_trans = kwargs['translation']
+                     if 'translation_frac' in kwargs:
+                         curr_trans_frac = kwargs['translation_frac']
 
-            if amorphous:
-                 topology_modified = True
-                 rng_amor = None
-                 if use_sobol and d_amorphous > 0:
-                     val = sobol_batch_amorphous[i_local][0]
-                     consumed_d += d_amorphous
-                     seed_loc = int(val * (2**32 - 1))
-                     rng_loc = np.random.default_rng(seed_loc)
-                     rng_amor = rng_loc.random(size=3 * len(struct))
+                     if use_sobol and sobol_batch_twinning is not None:
+                         consumed_d += d_twinning
+                         raw_tw = sobol_batch_twinning[i_local]
+                         # First 2 dims are translation
+                         curr_trans_frac = [raw_tw[0], raw_tw[1]]
+                         curr_trans = None
+                     elif curr_trans is None and curr_trans_frac is None:
+                         # Random translation if nothing specified, to match GB behavior
+                         curr_trans_frac = tuple(np.random.uniform(0, 1, 2))
+
+                     # Apply Twinning
+                     # z_frac is ignored in new implementation which builds a symmetric slab
+                     struct = _safe_generate_twinning(struct, miller_indices=twinning_indices, min_dist=twinning_min_dist, translation=curr_trans, translation_frac=curr_trans_frac)
                  
-                 struct = generate_amorphous(struct, min_dist=amorphous_min_dist, rattle_strength=amorphous_rattle, max_steps=amorphous_steps, rng_values=rng_amor)
+                     twin_normal_cart = [0.0, 0.0, 1.0]
+                     # d is roughly half cell height for symmetric slab
+                     twin_d = 0.5 * struct.cell[2, 2]
+
+                     # Merge with existing annotation if present
+                     if 'perturb_annotation' in struct.info:
+                         ann = struct.info['perturb_annotation']
+                         if 'metadata' not in ann: ann['metadata'] = {}
+                         ann['metadata'].update({
+                             'indices': twinning_indices,
+                             'translation_frac': curr_trans_frac,
+                             'normal_cart': twin_normal_cart,
+                             'plane_d': twin_d
+                         })
+                     else:
+                         struct.info['perturb_annotation'] = {
+                             'type': 'twinning',
+                             'metadata': {
+                                 'indices': twinning_indices,
+                                 'translation_frac': curr_trans_frac,
+                                 'normal_cart': twin_normal_cart, # For plotting
+                                 'plane_d': twin_d # For plotting
+                             }
+                         }
+                if stacking_fault:
+                     topology_modified = True
+                     curr_sf_s = sf_shift
+                     curr_sf_h = sf_height
+                     curr_trans_frac = None
                  
-            # 1. Cell Perturbation (Delayed)
-            rng_disp = None
-            if use_sobol:
-                consumed_d += 9 # Cell (always consumed)
-                strain_tensor = scaled_batch[i_local, :3]
-                
-                # Generate Global Rotation if requested using unused cell dims (3-5)
-                rotation = None
-                if rotate_cell:
-                    # Use dims 3, 4, 5 from raw_samples (unscaled [0, 1])
-                    u = raw_samples[i_local, 3]
-                    v = raw_samples[i_local, 4]
-                    
-                    # Map to Sphere
-                    z = 2 * u - 1
-                    r = np.sqrt(max(0, 1 - z*z))
-                    theta_ang = 2 * np.pi * v
-                    axis = np.array([r * np.cos(theta_ang), r * np.sin(theta_ang), z])
-                    angle = raw_samples[i_local, 5] * 360.0
-                    rotation = (axis, angle)
-                
-                # Consume displacement dims to keep Sobol sync, but only use if topology not modified
-                _rng_disp_sobol = sobol_batch_disp[i_local]
-                consumed_d += d_disp
-                
-                if not topology_modified:
-                    rng_disp = _rng_disp_sobol
-                else:
-                    rng_disp = None # Fallback to random thermal noise if topology changed size
-                
-                if rigid:
-                    if rigid_manager:
-                         # Warning: Rigid manager IDs match INITIAL atoms.
-                         # If topology modified, IDs are invalid!
-                         if not topology_modified:
-                            struct.set_array('rigid_id', rigid_manager.ids)
+                     if use_sobol and sobol_batch_sf is not None:
+                         consumed_d += d_sf
+                         raw_sf = sobol_batch_sf[i_local]
+                         idx = 0
+                     
+                         if sf_shift == 'random':
+                             curr_trans_frac = [raw_sf[idx], raw_sf[idx+1]]
+                             curr_sf_s = [0.0, 0.0, 0.0]
+                             idx += 2
                          else:
-                            # Cannot use rigid model on modified topology easily?
-                            # Fallback to non-rigid strain or try to re-detect?
-                            # For GB/Dislocation, rigid body assumption might break anyway.
-                            # We'll skip setting rigid_id and let it fail or default?
-                            pass
-                    
-                    # If topology modified, rigid mode might fail if it relies on 'rigid_id'.
-                    # We'll assume user knows what they are doing or fallback to simple strain if rigid fails?
-                    # generate_rigid_perturbed_structure checks for rigid_id.
-                    if topology_modified:
-                        # Fallback to standard strain?
-                        struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
-                    else:
-                        struct = generate_rigid_perturbed_structure(struct, 
-                                                                    mode=rigid_mode,
-                                                                    strain_lim=[-cell_pert_fraction, cell_pert_fraction],
-                                                                    min_distance=min_distance,
-                                                                    strain_tensor=strain_tensor,
-                                                                    rng_values=rng_disp)
-                else:
-                    struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
-            else:
-                rotation = None
-                if rotate_cell:
-                     # Random rotation
-                     axis = np.random.normal(size=3)
-                     axis /= np.linalg.norm(axis)
-                     angle = np.random.uniform(0, 360)
-                     rotation = (axis, angle)
+                             # Use explicit shift
+                             pass
+                         
+                         if sf_height == 'random':
+                             # Map [0, 1] to [0.1, 0.9]
+                             curr_sf_h = 0.1 + raw_sf[idx] * 0.8
+                
+                     else:
+                         # Random Sampler Logic
+                         if sf_shift == 'random':
+                             curr_trans_frac = np.random.uniform(0, 1, 2)
+                             curr_sf_s = [0.0, 0.0, 0.0]
+                         
+                         if sf_height == 'random':
+                             curr_sf_h = np.random.uniform(0.1, 0.9)
+                     
+                     struct = _safe_generate_stacking_fault(struct, plane_normal=sf_normal, shift_vector=curr_sf_s, plane_height_frac=curr_sf_h, translation_frac=curr_trans_frac, min_dist=sf_min_dist)
+                 
+                     # Retrieve actual shift vector (including extra_shift from translation_frac)
+                     # stored by generate_stacking_fault in 'shift_vector' or 'metadata'
+                     actual_shift = curr_sf_s
+                     if 'perturb_annotation' in struct.info:
+                         ann = struct.info['perturb_annotation']
+                         if 'shift_vector' in ann:
+                             actual_shift = ann['shift_vector']
+                         elif 'metadata' in ann and 'input_shift' in ann['metadata']:
+                             # generate_stacking_fault stores 'shift_vector' at top level
+                             pass
 
-                if not skip_normal:
-                     if rigid:
-                        if rigid_manager and not topology_modified:
-                             struct.set_array('rigid_id', rigid_manager.ids)
-                        
+                    # Calculate Cartesian height for plotting
+                     # Logic matches generate_stacking_fault: proj range
+                     # But we need the normal first
+                     # Handle Miller indices if needed
+                     sf_normal_cart = np.array(sf_normal, dtype=float)
+                     if all(isinstance(x, (int, np.integer)) for x in sf_normal):
+                         reciprocal_cell = struct.cell.reciprocal()
+                         sf_normal_cart = np.dot(sf_normal, reciprocal_cell)
+                 
+                     sf_norm = np.linalg.norm(sf_normal_cart)
+                     if sf_norm > 1e-8:
+                         sf_normal_cart /= sf_norm
+                 
+                     # Estimate plane constant d (height)
+                     # We need atom positions to find range
+                     positions = struct.get_positions()
+                     projections = np.dot(positions, sf_normal_cart)
+                     min_proj, max_proj = np.min(projections), np.max(projections)
+                     plane_d = min_proj + curr_sf_h * (max_proj - min_proj)
+
+                     struct.info['perturb_annotation'] = {
+                         'type': 'stacking_fault',
+                         'metadata': {
+                             'normal': sf_normal, # Keep original for reference
+                             'normal_cart': sf_normal_cart, # Add Cartesian for plotting
+                             'shift': actual_shift,
+                             'height': curr_sf_h, # Fractional
+                             'plane_d': plane_d, # Cartesian plane constant for plotting
+                             'translation_frac': curr_trans_frac
+                         }
+                     }
+
+                if amorphous:
+                     topology_modified = True
+                     rng_amor = None
+                     if use_sobol and d_amorphous > 0:
+                         val = sobol_batch_amorphous[i_local][0]
+                         consumed_d += d_amorphous
+                         seed_loc = int(val * (2**32 - 1))
+                         rng_loc = np.random.default_rng(seed_loc)
+                         rng_amor = rng_loc.random(size=3 * len(struct))
+                 
+                     struct = _safe_generate_amorphous(struct, min_dist=amorphous_min_dist, rattle_strength=amorphous_rattle, max_steps=amorphous_steps, rng_values=rng_amor)
+                 
+                # 1. Cell Perturbation (Delayed)
+                rng_disp = None
+                if use_sobol:
+                    consumed_d += 9 # Cell (always consumed)
+                    strain_tensor = scaled_batch[i_local, :3]
+                
+                    # Generate Global Rotation if requested using unused cell dims (3-5)
+                    rotation = None
+                    if rotate_cell:
+                        # Use dims 3, 4, 5 from raw_samples (unscaled [0, 1])
+                        u = raw_samples[i_local, 3]
+                        v = raw_samples[i_local, 4]
+                    
+                        # Map to Sphere
+                        z = 2 * u - 1
+                        r = np.sqrt(max(0, 1 - z*z))
+                        theta_ang = 2 * np.pi * v
+                        axis = np.array([r * np.cos(theta_ang), r * np.sin(theta_ang), z])
+                        angle = raw_samples[i_local, 5] * 360.0
+                        rotation = (axis, angle)
+                
+                    # Consume displacement dims to keep Sobol sync, but only use if topology not modified
+                    _rng_disp_sobol = sobol_batch_disp[i_local]
+                    consumed_d += d_disp
+                
+                    if not topology_modified:
+                        rng_disp = _rng_disp_sobol
+                    else:
+                        rng_disp = None # Fallback to random thermal noise if topology changed size
+                
+                    if rigid:
+                        if rigid_manager:
+                             # Warning: Rigid manager IDs match INITIAL atoms.
+                             # If topology modified, IDs are invalid!
+                             if not topology_modified:
+                                struct.set_array('rigid_id', rigid_manager.ids)
+                             else:
+                                # Cannot use rigid model on modified topology easily?
+                                # Fallback to non-rigid strain or try to re-detect?
+                                # For GB/Dislocation, rigid body assumption might break anyway.
+                                # We'll skip setting rigid_id and let it fail or default?
+                                pass
+                    
+                        # If topology modified, rigid mode might fail if it relies on 'rigid_id'.
+                        # We'll assume user knows what they are doing or fallback to simple strain if rigid fails?
+                        # generate_rigid_perturbed_structure checks for rigid_id.
                         if topology_modified:
-                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+                            # Fallback to standard strain?
+                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
                         else:
                             struct = generate_rigid_perturbed_structure(struct, 
                                                                         mode=rigid_mode,
                                                                         strain_lim=[-cell_pert_fraction, cell_pert_fraction],
                                                                         min_distance=min_distance,
-                                                                        rng_values=None)
-                     else:
-                        struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
-                 
-            # 3. Magnetic Perturbation
-            if mag_mode:
-                # Backup existing annotation if it's topological
-                prior_annotation = struct.info.get('perturb_annotation')
-                if prior_annotation:
-                    prior_annotation = prior_annotation.copy()
-
-                rng_mag = None
-                if use_sobol and d_mag > 0:
-                    rng_mag = sobol_batch_mag[i_local]
-                    consumed_d += d_mag
-                    
-                m_kwargs = mag_kwargs if mag_kwargs else {}
-                try:
-                    struct = apply_magnetic_perturbation(struct, mode=mag_mode, mag_config=mag_config, noise=mag_noise, rng_values=rng_mag, **m_kwargs)
-                except ValueError as e:
-                    if "Not enough random values" in str(e):
-                        raise ValueError(f"Sobol dimension mismatch in Magnetic Perturbation: {e}. This may happen if atom count changed due to topology defects.") from e
-                    raise
-                
-                # Restore annotation if it was topological
-                if prior_annotation and prior_annotation.get('type') in ['surface', 'grain_boundary', 'dislocation', 'twinning', 'stacking_fault', 'amorphous']:
-                     # Add magnetic info to metadata for completeness
-                     if 'metadata' not in prior_annotation:
-                         prior_annotation['metadata'] = {}
-                     prior_annotation['metadata']['magnetic_mode'] = mag_mode
-                     
-                     struct.info['perturb_annotation'] = prior_annotation
-
-                
-            # 4. Rotation
-            if rotate_formula:
-                rng_rot = None
-                if use_sobol and d_rot > 0:
-                    val = sobol_batch_rot[i_local][0]
-                    consumed_d += d_rot
-                    seed_loc = int(val * (2**32 - 1))
-                    rng_loc = np.random.default_rng(seed_loc)
-                    rng_rot = rng_loc.random(size=10 * len(struct))
-                
-                try:
-                    struct = rotate_fragments_by_formula(struct, rotate_formula, rng_values=rng_rot)
-                except ValueError as e:
-                    if "Not enough random values" in str(e):
-                         raise ValueError(f"Sobol dimension mismatch in Rotation: {e}.") from e
-                    raise
-            
-            # 5. Vacancy
-            if vac_elements and vac_num > 0:
-                rng_vac = None
-                if use_sobol and d_vac > 0:
-                    rng_vac = sobol_batch_vac[i_local]
-                    consumed_d += d_vac
-                
-                try:
-                    struct, vac_meta = generate_vacancies(struct, vac_elements, vac_num, mode='random', rng_values=rng_vac)
-                    struct.info['perturb_annotation'] = {'type': 'vacancy', 'metadata': vac_meta}
-                except ValueError as e:
-                    if "Not enough random values" in str(e):
-                        raise ValueError(f"Sobol dimension mismatch in Vacancy Generation: {e}. This may happen if atom count changed due to topology defects.") from e
-                    raise
-                
-            # 6. Shuffle
-            if shuffle_elements:
-                rng_shuf = None
-                if use_sobol and d_shuf > 0:
-                    rng_shuf = sobol_batch_shuf[i_local]
-                    consumed_d += d_shuf
-                
-                try:
-                    struct, shuf_meta = shuffle_element_positions(struct, shuffle_elements, shuffle_method=shuffle_method, rng_values=rng_shuf)
-                    struct.info['perturb_annotation'] = {'type': 'shuffle', 'metadata': shuf_meta}
-                except ValueError as e:
-                     if "Not enough random values" in str(e):
-                         raise ValueError(f"Sobol dimension mismatch in Shuffle: {e}. This may happen if atom count changed due to topology defects.") from e
-                     raise
-
-            # 7. Volume Scaling
-            if vol_pert_fraction > 0:
-                if use_sobol:
-                    v_scale = 1.0 + (sobol_batch_vol[i_local][0] - 0.5) * 2 * vol_pert_fraction
-                    consumed_d += 1
-                else:
-                    v_scale = 1.0 + (np.random.uniform(0, 1) - 0.5) * 2 * vol_pert_fraction
-                
-                struct.set_cell(struct.get_cell() * v_scale, scale_atoms=True)
-                if 'perturb_annotation' in struct.info:
-                    if 'metadata' not in struct.info['perturb_annotation']:
-                        struct.info['perturb_annotation']['metadata'] = {}
-                    struct.info['perturb_annotation']['metadata']['vol_scale'] = v_scale
-
-            if use_sobol:
-                assert consumed_d == total_d, f"Strict dimension checking failed! Consumed {consumed_d} but allocated {total_d} dimensions."
-
-            # Construct Config_type
-            config_types = []
-            if not skip_normal:
-                 config_types.append(f"strain_{cell_pert_fraction}")
-            
-            def _fmt(val):
-                if isinstance(val, (list, tuple, np.ndarray)):
-                    # Format floats as integers if they are integers
-                    parts = []
-                    for x in val:
-                        try:
-                            f = float(x)
-                            if f.is_integer():
-                                parts.append(str(int(f)))
-                            else:
-                                parts.append(str(f))
-                        except:
-                            parts.append(str(x))
-                    return ",".join(parts)
-                return str(val)
-
-            if surface:
-                 config_types.append(f"surf({_fmt(surface_indices)})")
-            if gb:
-                 config_types.append(f"gb{_fmt(gb_axis)}_{curr_angle:.1f}")
-            if dislocation:
-                 config_types.append(f"disloc_{curr_type}")
-            if twinning:
-                 config_types.append(f"twin_{_fmt(twinning_indices)}")
-            if stacking_fault:
-                 config_types.append(f"sf_{_fmt(sf_normal)}")
-            if amorphous:
-                 config_types.append("amorphous")
-            if mag_mode:
-                 config_types.append(f"mag_{mag_mode}")
-            if vac_elements and vac_num > 0:
-                 config_types.append(f"vac_{vac_num}")
-            if vol_pert_fraction > 0:
-                 config_types.append(f"vol_{vol_pert_fraction}")
-            
-            if config_types:
-                struct.info['Config_type'] = "+".join(config_types)
-
-            # Filter Vacancies (remove X atoms)
-            if vac_elements and vac_num > 0:
-                 struct = _filter_vacancies_for_export(struct)
-
-            # Isotropic Volume Scaling (Super-Coverage Feature #2)
-            if vol_pert_fraction > 0:
-                if use_sobol and sobol_batch_vol is not None:
-                    v_val = sobol_batch_vol[i_local][0] # Use the single dimension for volume
-                    # Scale v_val [0, 1] to [-vol_pert_fraction, vol_pert_fraction]
-                    # V' = V * (1 + delta) where delta is in [-f, f]
-                    delta = (v_val * 2 - 1) * vol_pert_fraction
-                    vol_scale_factor = 1.0 + delta
-                    length_scale = vol_scale_factor**(1/3)
-                    struct.set_cell(struct.cell * length_scale, scale_atoms=True)
-                else:
-                    # Random sampler
-                    delta = np.random.uniform(-vol_pert_fraction, vol_pert_fraction)
-                    vol_scale_factor = 1.0 + delta
-                    struct.set_cell(struct.cell * (vol_scale_factor**(1/3)), scale_atoms=True)
-
-            # Similarity Filtering (Super-Coverage Feature #3)
-            # We initialize the filter once per perturb call
-            if 'sim_filter' not in locals():
-                sim_filter = SimilarityFilter(threshold=similarity_threshold)
-            
-            if similarity_threshold < 1.0:
-                if sim_filter.is_redundant(struct):
-                    continue
-
-            # Annotation layering (Super-Coverage Feature #4)
-            # Ensure history of perturbations is kept if needed
-            # ... (the generators already add annotations to struct.info)
-            
-            # Check bond lengths
-            if validate_structure:
-                # Determine coefficient
-                eff_coeff = validate_coefficient
-                if eff_coeff is None:
-                    # Default to 0.7 usually, but 0.4 for major geometric defects that might be unrelaxed
-                    if gb or dislocation or twinning or stacking_fault or amorphous:
-                        eff_coeff = 0.3
+                                                                        strain_tensor=strain_tensor,
+                                                                        rng_values=rng_disp)
                     else:
-                        eff_coeff = 0.7
+                        struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, strain_tensor=strain_tensor, rotation=rotation, rng_values=rng_disp)
+                else:
+                    rotation = None
+                    if rotate_cell:
+                         # Random rotation
+                         axis = np.random.normal(size=3)
+                         axis /= np.linalg.norm(axis)
+                         angle = np.random.uniform(0, 360)
+                         rotation = (axis, angle)
+
+                    if not skip_normal:
+                         if rigid:
+                            if rigid_manager and not topology_modified:
+                                 struct.set_array('rigid_id', rigid_manager.ids)
+                        
+                            if topology_modified:
+                                struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+                            else:
+                                struct = generate_rigid_perturbed_structure(struct, 
+                                                                            mode=rigid_mode,
+                                                                            strain_lim=[-cell_pert_fraction, cell_pert_fraction],
+                                                                            min_distance=min_distance,
+                                                                            rng_values=None)
+                         else:
+                            struct = generate_strained_structure(struct, [-cell_pert_fraction, cell_pert_fraction], min_distance, rotation=rotation)
+                 
+                # 3. Magnetic Perturbation
+                if mag_mode:
+                    # Backup existing annotation if it's topological
+                    prior_annotation = struct.info.get('perturb_annotation')
+                    if prior_annotation:
+                        prior_annotation = prior_annotation.copy()
+
+                    rng_mag = None
+                    if use_sobol and d_mag > 0:
+                        rng_mag = sobol_batch_mag[i_local]
+                        consumed_d += d_mag
+                    
+                    m_kwargs = mag_kwargs if mag_kwargs else {}
+                    try:
+                        struct = _safe_apply_magnetic_perturbation(struct, mode=mag_mode, mag_config=mag_config, noise=mag_noise, rng_values=rng_mag, **m_kwargs)
+                    except ValueError as e:
+                        if "Not enough random values" in str(e):
+                            raise ValueError(f"Sobol dimension mismatch in Magnetic Perturbation: {e}. This may happen if atom count changed due to topology defects.") from e
+                        raise
                 
-                if not adjust_reasonable(struct, coefficient=eff_coeff):
+                    # Restore annotation if it was topological
+                    if prior_annotation and prior_annotation.get('type') in ['surface', 'grain_boundary', 'dislocation', 'twinning', 'stacking_fault', 'amorphous']:
+                         # Add magnetic info to metadata for completeness
+                         if 'metadata' not in prior_annotation:
+                             prior_annotation['metadata'] = {}
+                         prior_annotation['metadata']['magnetic_mode'] = mag_mode
+                     
+                         struct.info['perturb_annotation'] = prior_annotation
+
+                
+                # 4. Rotation
+                if rotate_formula:
+                    rng_rot = None
+                    if use_sobol and d_rot > 0:
+                        val = sobol_batch_rot[i_local][0]
+                        consumed_d += d_rot
+                        seed_loc = int(val * (2**32 - 1))
+                        rng_loc = np.random.default_rng(seed_loc)
+                        rng_rot = rng_loc.random(size=10 * len(struct))
+                
+                    try:
+                        struct = rotate_fragments_by_formula(struct, rotate_formula, rng_values=rng_rot)
+                    except ValueError as e:
+                        if "Not enough random values" in str(e):
+                             raise ValueError(f"Sobol dimension mismatch in Rotation: {e}.") from e
+                        raise
+            
+                # 5. Vacancy
+                if vac_elements and vac_num > 0:
+                    rng_vac = None
+                    if use_sobol and d_vac > 0:
+                        rng_vac = sobol_batch_vac[i_local]
+                        consumed_d += d_vac
+                
+                    try:
+                        struct, vac_meta = generate_vacancies(struct, vac_elements, vac_num, mode='random', rng_values=rng_vac)
+                        struct.info['perturb_annotation'] = {'type': 'vacancy', 'metadata': vac_meta}
+                    except ValueError as e:
+                        if "Not enough random values" in str(e):
+                            raise ValueError(f"Sobol dimension mismatch in Vacancy Generation: {e}. This may happen if atom count changed due to topology defects.") from e
+                        raise
+                
+                # 6. Shuffle
+                if shuffle_elements:
+                    rng_shuf = None
+                    if use_sobol and d_shuf > 0:
+                        rng_shuf = sobol_batch_shuf[i_local]
+                        consumed_d += d_shuf
+                
+                    try:
+                        struct, shuf_meta = shuffle_element_positions(struct, shuffle_elements, shuffle_method=shuffle_method, rng_values=rng_shuf)
+                        struct.info['perturb_annotation'] = {'type': 'shuffle', 'metadata': shuf_meta}
+                    except ValueError as e:
+                         if "Not enough random values" in str(e):
+                             raise ValueError(f"Sobol dimension mismatch in Shuffle: {e}. This may happen if atom count changed due to topology defects.") from e
+                         raise
+
+                # 7. Volume Scaling
+                if vol_pert_fraction > 0:
+                    if use_sobol:
+                        v_scale = 1.0 + (sobol_batch_vol[i_local][0] - 0.5) * 2 * vol_pert_fraction
+                        consumed_d += 1
+                    else:
+                        v_scale = 1.0 + (np.random.uniform(0, 1) - 0.5) * 2 * vol_pert_fraction
+                
+                    struct.set_cell(struct.get_cell() * v_scale, scale_atoms=True)
+                    if 'perturb_annotation' in struct.info:
+                        if 'metadata' not in struct.info['perturb_annotation']:
+                            struct.info['perturb_annotation']['metadata'] = {}
+                        struct.info['perturb_annotation']['metadata']['vol_scale'] = v_scale
+
+                if use_sobol:
+                    assert consumed_d == total_d, f"Strict dimension checking failed! Consumed {consumed_d} but allocated {total_d} dimensions."
+
+                # Construct Config_type
+                config_types = []
+                if not skip_normal:
+                     config_types.append(f"strain_{cell_pert_fraction}")
+            
+                def _fmt(val):
+                    if isinstance(val, (list, tuple, np.ndarray)):
+                        # Format floats as integers if they are integers
+                        parts = []
+                        for x in val:
+                            try:
+                                f = float(x)
+                                if f.is_integer():
+                                    parts.append(str(int(f)))
+                                else:
+                                    parts.append(str(f))
+                            except (ValueError, TypeError):
+                                parts.append(str(x))
+                        return ",".join(parts)
+                    return str(val)
+
+                if surface:
+                     config_types.append(f"surf({_fmt(surface_indices)})")
+                if gb:
+                     config_types.append(f"gb{_fmt(gb_axis)}_{curr_angle:.1f}")
+                if dislocation:
+                     config_types.append(f"disloc_{curr_type}")
+                if twinning:
+                     config_types.append(f"twin_{_fmt(twinning_indices)}")
+                if stacking_fault:
+                     config_types.append(f"sf_{_fmt(sf_normal)}")
+                if amorphous:
+                     config_types.append("amorphous")
+                if mag_mode:
+                     config_types.append(f"mag_{mag_mode}")
+                if vac_elements and vac_num > 0:
+                     config_types.append(f"vac_{vac_num}")
+                if vol_pert_fraction > 0:
+                     config_types.append(f"vol_{vol_pert_fraction}")
+            
+                if config_types:
+                    struct.info['Config_type'] = "+".join(config_types)
+
+                # Filter Vacancies (remove X atoms)
+                if vac_elements and vac_num > 0:
+                     struct = _filter_vacancies_for_export(struct)
+
+                # Isotropic Volume Scaling (Super-Coverage Feature #2)
+                if vol_pert_fraction > 0:
+                    if use_sobol and sobol_batch_vol is not None:
+                        v_val = sobol_batch_vol[i_local][0] # Use the single dimension for volume
+                        # Scale v_val [0, 1] to [-vol_pert_fraction, vol_pert_fraction]
+                        # V' = V * (1 + delta) where delta is in [-f, f]
+                        delta = (v_val * 2 - 1) * vol_pert_fraction
+                        vol_scale_factor = 1.0 + delta
+                        vol_scale_factor = max(vol_scale_factor, 0.5)  # Prevent negative volume
+                        length_scale = vol_scale_factor**(1/3)
+                        struct.set_cell(struct.cell * length_scale, scale_atoms=True)
+                    else:
+                        # Random sampler
+                        delta = np.random.uniform(-vol_pert_fraction, vol_pert_fraction)
+                        vol_scale_factor = 1.0 + delta
+                        vol_scale_factor = max(vol_scale_factor, 0.5)  # Prevent negative volume
+                        struct.set_cell(struct.cell * (vol_scale_factor**(1/3)), scale_atoms=True)
+
+                # Similarity Filtering (Super-Coverage Feature #3)
+                # We initialize the filter once per perturb call
+                if 'sim_filter' not in locals():
+                    sim_filter = SimilarityFilter(threshold=similarity_threshold)
+            
+                if similarity_threshold < 1.0:
+                    if sim_filter.is_redundant(struct):
+                        continue
+
+                # Annotation layering (Super-Coverage Feature #4)
+                # Ensure history of perturbations is kept if needed
+                # ... (the generators already add annotations to struct.info)
+            
+                # Check bond lengths
+                if validate_structure:
+                    # Determine coefficient
+                    eff_coeff = validate_coefficient
+                    if eff_coeff is None:
+                        # Default to 0.7 usually, but 0.4 for major geometric defects that might be unrelaxed
+                        if gb or dislocation or twinning or stacking_fault or amorphous:
+                            eff_coeff = 0.3
+                        else:
+                            eff_coeff = 0.7
+                
+                    if not adjust_reasonable(struct, coefficient=eff_coeff):
+                        if debug_plot:
+                            logger.debug(f"Structure {i_global} rejected by adjust_reasonable (coeff={eff_coeff})")
+                            try:
+                                dist_info = get_mini_distance_info(struct)
+                                logger.debug(f"Min distances: {dist_info}")
+                            except Exception as e:
+                                logger.error(f"Could not get distance info: {e}")
+                        continue
+            
+                # Filter by bonds ratio if requested
+                if filter_bonds and base_bond:
+                     current_bond = compute_min_bond_lengths(struct)
+                     condition = [base_bond.get(key,0)*0.6 > a_b for key,a_b in current_bond.items()]
+                     if any(condition):
+                         continue
+            
+                # Safety check: reject structures with NaN/Inf positions or cell
+                if not (np.isfinite(struct.positions).all() and np.isfinite(struct.get_cell()).all()):
                     if debug_plot:
-                        logger.debug(f"Structure {i_global} rejected by adjust_reasonable (coeff={eff_coeff})")
-                        try:
-                            dist_info = get_mini_distance_info(struct)
-                            logger.debug(f"Min distances: {dist_info}")
-                        except Exception as e:
-                            logger.error(f"Could not get distance info: {e}")
+                        logger.warning(f"Structure {i_global} rejected: NaN/Inf in positions or cell")
                     continue
             
-            # Filter by bonds ratio if requested
-            if filter_bonds and base_bond:
-                 current_bond = compute_min_bond_lengths(struct)
-                 condition = [base_bond.get(key,0)*0.6 > a_b for key,a_b in current_bond.items()]
-                 if any(condition):
-                     continue
-            
-            if debug_plot:
-                plot_comparison(atoms, struct, f"debug_perturb_{i_global}.png")
+                if debug_plot:
+                    plot_comparison(atoms, struct, f"debug_perturb_{i_global}.png")
 
-            yield struct
-            progress.advance(task_id)
+                yield struct
+                progress.advance(task_id)
+            except PerturbationError as e:
+                logger.warning(f"Structure {i_global} skipped: {e}")
+                continue
 
             if use_sobol and state_file:
                 current_count = start_index + i_global + 1
