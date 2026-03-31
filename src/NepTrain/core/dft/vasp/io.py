@@ -15,6 +15,8 @@ from ase.calculators.vasp.vasp import check_atoms
 from ase.io import read as ase_read
 from ase.io import write as ase_write
 from NepTrain import Config
+from NepTrain.core.perturb.vacancy import _filter_vacancies_for_export
+
 def write_to_xyz(vaspxml_path, save_path, Config_type, append=True):
 
     atoms_list = []
@@ -35,7 +37,9 @@ def write_to_xyz(vaspxml_path, save_path, Config_type, append=True):
         atoms_list.append(atom)
         index += 1
 
-    ase_write(save_path, atoms_list, format='extxyz', append=append)
+    # Filter vacancies
+    filtered_list = [_filter_vacancies_for_export(atom) for atom in atoms_list]
+    ase_write(save_path, filtered_list, format='extxyz', append=append)
     return atoms_list
 class VaspInput(Vasp):
 

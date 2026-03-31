@@ -25,6 +25,12 @@ The Vasp calculation allows the use of the `INCAR` file as a template, which ena
   Number of CPU cores. Default: `1`.
 - `--incar`  
   Path to INCAR file. Default: `./INCAR`.
+- `--mag`
+  Enable magnetic moments in the calculation. Default: `False`.
+  **Note**: By default, `I_CONSTRAINED_M=1` (constrained direction) is set to preserve the initial magnetic configuration.
+  If the input structure has no magnetic moments, default values will be loaded from the `[magmom]` section in `.NepTrain` or `config.ini` (e.g., `Fe = 2.2`).
+- `--mag-relax`
+  Allow magnetic moment direction/size relaxation (disables `I_CONSTRAINED_M=1`). Use this if you want the magnetic moments to relax to the ground state.
 - `-kspacing`  
   Set k-spacing value.
 - `-ka`  

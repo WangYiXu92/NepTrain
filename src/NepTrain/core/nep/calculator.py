@@ -4,6 +4,7 @@
 # @Author  : 兵
 # @email    : 1747193328@qq.com
 import contextlib
+import logging
 import os
 
 import numpy as np
@@ -12,6 +13,9 @@ from ase import Atoms
 from functools import partial
 from typing import Iterable
 from NepTrain.nep_cpu import CpuNep
+
+# Set up module logger
+logger = logging.getLogger(__name__)
 
 
 
@@ -169,14 +173,14 @@ if __name__ == '__main__':
     start=time.time()
 
     descriptors = nep3.get_structures_descriptors(structures)
-    print(f"计算描述符：{len(structures)}个结构，耗时：{time.time()-start:.3f}s")
-    print("descriptors",descriptors.shape)
+    logger.info(f"计算描述符：{len(structures)}个结构，耗时：{time.time()-start:.3f}s")
+    logger.debug(f"descriptors shape: {descriptors.shape}")
     start=time.time()
 
     potentials ,forces ,virials   = nep3.calculate(structures)
 
-    print(f"计算性质：{len(structures)}个结构，耗时：{time.time()-start:.3f}s")
-    print("potentials",potentials.shape)
-    print("forces",forces.shape)
-    print("virials",virials.shape)
+    logger.info(f"计算性质：{len(structures)}个结构，耗时：{time.time()-start:.3f}s")
+    logger.debug(f"potentials shape: {potentials.shape}")
+    logger.debug(f"forces shape: {forces.shape}")
+    logger.debug(f"virials shape: {virials.shape}")
 

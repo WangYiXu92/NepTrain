@@ -12,6 +12,7 @@ from ase.io import write as ase_write
 from ase.calculators.abacus import Abacus, AbacusProfile
 
 from NepTrain import utils, Config, module_path
+from NepTrain.core.perturb.magnetic import ensure_magnetic_configuration
 
 from .io import read_input_file,StructureVar
 
@@ -23,10 +24,22 @@ def calculate_abacus(atoms:Atoms,argparse):
     global atoms_index
     StructureVar.init("./")
 
+    if getattr(argparse, 'use_mag', False):
+        # Ensure magnetic configuration is present (from file or config)
+        atoms = ensure_magnetic_configuration(atoms)
+    else:
+        atoms.set_initial_magnetic_moments(None)
+
     if argparse.incar is not None and os.path.exists(argparse.incar):
         input_dict = read_input_file(argparse.incar)
     else:
         input_dict = read_input_file(os.path.join(module_path,"core/dft/abacus/INPUT"))
+    
+    # Check if we have magnetic moments and set nspin=2 if needed
+    if np.any(atoms.get_initial_magnetic_moments()):
+        if int(input_dict.get('nspin', 1)) == 1:
+            input_dict['nspin'] = 2
+
     directory=os.path.join(argparse.directory,f"{atoms_index}-{atoms.get_chemical_formula()}")
     atoms_index+=1
     command = f"{Config.get('environ','mpirun_path')} -n {argparse.n_cpu} {Config.get('environ','abacus_path',fallback='abacus')}"

@@ -1,0 +1,3 @@
+[console_scripts]
+NepTrain = NepTrain.cli.cli:main
+neptrain = NepTrain.cli.cli:main

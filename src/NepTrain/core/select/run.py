@@ -68,8 +68,39 @@ def run_select(argparse):
     else:
         base_train=ase_read(argparse.base,":",format="extxyz")
 
-    if utils.is_file_empty(argparse.nep):
-        utils.print_msg("An invalid path for nep.txt was provided, using SOAP descriptors instead.")
+    nep_path = argparse.nep
+    use_soap = False
+    
+    # Handle explicit "nep89" keyword
+    if nep_path == "nep89":
+        nep89_path = utils.get_nep89_path()
+        if nep89_path:
+            nep_path = nep89_path
+            utils.print_msg(f"Using explicitly requested Universal NEP89 model: {nep_path}")
+        else:
+            use_soap = True
+            utils.print_warning("Universal NEP89 model requested but not found in config.")
+            utils.print_msg("Tip: Set 'nep89_path' in ~/.NepTrain (config.ini).")
+
+    elif nep_path is None:
+        if os.path.exists("nep.txt") and not utils.is_file_empty("nep.txt"):
+            nep_path = "nep.txt"
+            utils.print_msg(f"Using local NEP model: {nep_path}")
+        else:
+            nep89_path = utils.get_nep89_path()
+            if nep89_path:
+                nep_path = nep89_path
+                utils.print_msg(f"Using Universal NEP89 model: {nep_path}")
+            else:
+                use_soap = True
+                utils.print_msg("No NEP model found (checked ./nep.txt and universal NEP89). Using SOAP descriptors.")
+                utils.print_msg("Tip: To use the universal NEP89 model, set 'nep89_path' in ~/.NepTrain (config.ini).")
+    
+    elif utils.is_file_empty(nep_path):
+        utils.print_msg(f"An invalid path for nep.txt was provided: {nep_path}, using SOAP descriptors instead.")
+        use_soap = True
+
+    if use_soap:
         species=set()
         for atoms in trajectory_structures+base_train:
             for i in atoms.get_chemical_symbols():
@@ -85,7 +116,7 @@ def run_select(argparse):
         descriptor =DescriptorCalculator("soap",**kwargs_dict)
 
     else:
-        descriptor =DescriptorCalculator("nep", model_file=argparse.nep)
+        descriptor =DescriptorCalculator("nep", model_file=nep_path)
 
     utils.print_msg("Start generating structure descriptor, please wait")
     train_structure_des =descriptor.get_structures_descriptors(base_train)

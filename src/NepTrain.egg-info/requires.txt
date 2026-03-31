@@ -1,0 +1,13 @@
+ase
+rich
+argcomplete
+watchdog
+scikit-learn
+ruamel.yaml
+dscribe
+umap-learn>=0.5.7
+tqdm
+joblib
+dpdispatcher
+portalocker>=2.0.0
+pydantic>=2.0.0

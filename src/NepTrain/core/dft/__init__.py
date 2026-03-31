@@ -29,3 +29,9 @@ def run_dft(argparse):
         if argparse.incar is None:
             argparse.incar=f"./INPUT"
         return run_abacus(argparse)
+    elif argparse.software in ["qe", "quantum_espresso"]:
+        from .qe import run_qe
+        
+        if argparse.incar is None:
+            argparse.incar = "./pw.in"
+        return run_qe(argparse)

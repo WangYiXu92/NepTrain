@@ -18,6 +18,7 @@ from .worker import submit_job, async_submit_job
 from ruamel.yaml import YAML
 
 from NepTrain import utils
+from NepTrain.core.perturb.vacancy import _filter_vacancies_for_export
 
 from ..utils import check_env
 
@@ -151,7 +152,8 @@ class NepTrainWorker:
 
         for i, xyz in enumerate(split_addxyz_list):
             if xyz:
-                ase_write(self.__getattr__(f"dft_learn_add_{i + 1}_xyz_file"), xyz, format="extxyz")
+                filtered_xyz = [_filter_vacancies_for_export(atoms) for atoms in xyz]
+                ase_write(self.__getattr__(f"dft_learn_add_{i + 1}_xyz_file"), filtered_xyz, format="extxyz")
 
     def check_env(self):
 
@@ -527,9 +529,9 @@ class NepTrainWorker:
                     else:
                         bad_structure.append(structure)
 
-                ase_write(self.all_learn_calculated_xyz_file,good_structure,append=False,format="extxyz")
+                ase_write(self.all_learn_calculated_xyz_file, [_filter_vacancies_for_export(s) for s in good_structure], append=False, format="extxyz")
                 if bad_structure:
-                    ase_write(self.remove_by_force_xyz_file, bad_structure, append=False, format="extxyz")
+                    ase_write(self.remove_by_force_xyz_file, [_filter_vacancies_for_export(s) for s in bad_structure], append=False, format="extxyz")
 
         else:
             utils.print_warning("Detected that the calculation input file is empty, proceeding directly to the next step!")

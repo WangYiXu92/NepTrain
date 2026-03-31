@@ -24,15 +24,12 @@ def calculate_pairwise_distances(lattice_params:np.ndarray, atom_coords:np.ndarr
 
 
     if fractional:
+        # Convert fractional to Cartesian if needed
         atom_coords = np.dot(atom_coords, lattice_params)
-
-    diff = atom_coords[np.newaxis, :, :] - atom_coords[:, np.newaxis, :]
-    shifts = np.array(np.meshgrid([-1, 0, 1], [-1, 0, 1], [-1, 0, 1]), dtype=np.int8).T.reshape(-1, 3)
-    lattice_shifts = np.dot(shifts, lattice_params)
-    all_diffs = diff[:, :, np.newaxis, :] + lattice_shifts[np.newaxis, np.newaxis, :, :]
-    all_distances = np.sqrt(np.sum(all_diffs ** 2, axis=-1))
-    distances = np.min(all_distances, axis=-1)
-    np.fill_diagonal(distances, 0)
+    
+    # We use a temporary Atoms object to leverage ASE's optimized MIC distance calculation
+    atoms = Atoms(positions=atom_coords, cell=lattice_params, pbc=True)
+    distances = atoms.get_all_distances(mic=True)
     return distances
 
 

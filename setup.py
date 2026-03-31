@@ -76,11 +76,30 @@ class BuildExt(build_ext):
 
 
 setup(
+    name="NepTrain",
+    version="0.1.0",
     author="Chen Cheng bing",
-cmdclass={'build_ext': BuildExt},
+    author_email="1747193328@qq.com",
+    description="Automatic training for NEP",
+    cmdclass={'build_ext': BuildExt},
     # include_dirs=[np.get_include()],
-packages=find_packages(),
-ext_modules=ext_modules,
-zip_safe=False,
-include_package_data=True,  # 确保包含额外的文件（如 .so）
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
+    ext_modules=ext_modules,
+    zip_safe=False,
+    include_package_data=True,  # 确保包含额外的文件（如 .so）
+    install_requires=[
+        "ase",
+        "rich",
+        "argcomplete",
+        "watchdog",
+        "scikit-learn",
+        "ruamel.yaml",
+        "dscribe",
+        "umap-learn>=0.5.7",
+        "tqdm",
+        "joblib",
+        "dpdispatcher",
+        "pybind11>=2.12.0",
+    ],
 )

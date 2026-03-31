@@ -4,13 +4,49 @@
 # @Author  : 兵
 # @email    : 1747193328@qq.com
 import configparser
+import logging
 import os
 import shutil
+from typing import Dict, Any
 
 from watchdog.observers import Observer
 
 from NepTrain import utils
+from NepTrain.exceptions import (
+    NepTrainError,
+    ConfigurationError,
+    ValidationError,
+    FileOperationError,
+    CalculationError,
+    ParallelizationError,
+    ConvergenceError,
+    ResourceError,
+    # GPUMD-specific exceptions
+    GPUMDExecutionError,
+    GPUMDOutputError,
+    NEPParsingError,
+    NEPExecutionError,
+    FileFormatError,
+    ConcentrationError,
+    TemperatureError,
+    EmptyInputError,
+    ParameterRangeError,
+    ConcurrentAccessError,
+    TempFileError,
+    # Perturbation-specific exceptions
+    PerturbationError,
+    DimensionMismatchError,
+    AtomicOverlapError,
+    TopologyError,
+    MemoryLimitError,
+)
+from NepTrain.logging_config import setup_logging, get_logger, get_default_logger
 
+# Set up package-level logging
+logger = get_logger(__name__)
+
+# Configure logging for package
+setup_logging(log_level=logging.INFO)
 
 
 from importlib.metadata import version
@@ -26,6 +62,35 @@ if not os.path.exists(config_path)  :
 Config = configparser.RawConfigParser()
 Config.read(config_path,encoding="utf8")
 
+
+__all__ = [
+    'NepTrainError',
+    'ConfigurationError',
+    'ValidationError',
+    'FileOperationError',
+    'CalculationError',
+    'ParallelizationError',
+    'ConvergenceError',
+    'ResourceError',
+    # GPUMD-specific exceptions
+    'GPUMDExecutionError',
+    'GPUMDOutputError',
+    'NEPParsingError',
+    'NEPExecutionError',
+    'FileFormatError',
+    'ConcentrationError',
+    'TemperatureError',
+    'EmptyInputError',
+    'ParameterRangeError',
+    'ConcurrentAccessError',
+    'TempFileError',
+    # Perturbation-specific exceptions
+    'PerturbationError',
+    'DimensionMismatchError',
+    'AtomicOverlapError',
+    'TopologyError',
+    'MemoryLimitError',
+]
 
 
 #

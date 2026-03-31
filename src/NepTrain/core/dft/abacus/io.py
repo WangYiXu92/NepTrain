@@ -47,7 +47,7 @@ class StructureVar:
             try:
                 with open( upf,"r") as f:
                     ufp_content = f.read()
-                elem = re.search('element="(\w+)"',ufp_content).group(1)
+                elem = re.search(r'element="(\w+)"',ufp_content).group(1)
                 cls.pp_files[elem] = upf.name
             except:
                 pass
@@ -56,7 +56,7 @@ class StructureVar:
             try:
                 with open( orb,"r") as f:
                     orb_content = f.read()
-                elem = re.search('Element\s+(\w+)',orb_content).group(1)
+                elem = re.search(r'Element\s+(\w+)',orb_content).group(1)
                 cls.orbs[elem] = orb.name
             except:
                 pass
