@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — Perturb Module Refactoring (branch: `refactor/cleanup-and-split-run`)
+
+- **Module Restructuring**:
+    - Extracted `config.py` (PerturbConfig dataclass) from `run.py`
+    - Extracted `normalize.py` (parameter normalization utilities) from `run.py`
+    - Extracted `dimensions.py` (Sobol dimension calculation) from `run.py`
+    - Consolidated legacy handlers into `handlers_legacy.py`
+    - Deleted deprecated files (`perturb_v2.py`, `registry_init.py`)
+    - Cleaned up 20+ stale files/directories from project root
+
+- **Feature: Antisite/Substitution Perturbation** (`antisite.py`):
+    - `get_equivalent_sites()`: spglib-based Wyckoff symmetry analysis
+    - `generate_antisite_defects()`: symmetry-aware and random antisite defect generation
+    - Supports string (`'Fe,Al'`) and list (`[('Fe','Al')]`) pair formats
+    - Sobol dimension = `num_swaps`; optional spglib dependency with fallback
+    - Integrated into `perturb()` main loop between vacancy and shuffle
+
+- **Feature: Symmetry-Preserving Strain** (`symmetry_strain.py`):
+    - Crystal system constrained strain tensor generation
+    - Independent strain components: cubic(1), tetragonal(2), hexagonal(2), trigonal(2), orthorhombic(3), monoclinic(4), triclinic(6)
+    - `detect_crystal_system_spglib()`: spglib-first detection with geometry fallback
+    - `sym_strain=True` automatically replaces generic cell perturbation (`d_cell=0`)
+    - Volume conservation via rescaling after strain application
+
+- **Feature: Multi-Defect Compatibility Checks** (`compatibility.py`):
+    - `validate_compatibility(**kwargs)`: validates perturbation combinations at entry
+    - 6 mutex groups (e.g., `sym_strain` ⊥ `cell_pert`, `amorphous` ⊥ `dislocation/twinning/gb/sf/surface`)
+    - 2 dependency groups (`vacancy` → `vac_elements`, `antisite` → `antisite_pairs`)
+    - 2 soft warnings (`amorphous+shuffle`, `amorphous+rigid`)
+    - Raises `ValueError` on conflicts; returns warnings list otherwise
+
+- **Robustness Improvements**:
+    - Replaced all bare `except:` with specific exception types
+    - Added negative volume protection after cell perturbations
+    - Added NaN/Inf checks for positions and cell matrices
+    - Enabled `_safe_*` wrapper functions for error-safe operations
+
+- **Bug Fixes**:
+    - Fixed volume perturbation executed twice (removed duplicate scaling block)
+    - Fixed Sobol `consumed_d` tracking for volume perturbation
+    - Removed duplicate import in `run.py`
+
+- **Tests**: 55 new tests (13 antisite + 23 symmetry_strain + 19 compatibility)
+
+---
+
 ## [0.8.0] - 2026-03-26
 
 ### Added

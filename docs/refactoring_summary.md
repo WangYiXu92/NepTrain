@@ -216,3 +216,48 @@ The new `perturb_v2()` function is **fully backward compatible** with the origin
 ## Conclusion
 
 The registry-based refactoring is **complete and functional**. All core handlers are implemented, tested, and working correctly. The new architecture provides a solid foundation for future development while maintaining full backward compatibility with the existing API.
+
+---
+
+# Phase 2: Cleanup, Split & New Features (2026-03-31)
+
+**Branch**: `refactor/cleanup-and-split-run`
+**Commits**: `539b1b8` → `e6e1650` → `9823b45`
+
+## Module Restructuring
+
+- **`config.py`**: Extracted `PerturbConfig` dataclass (all perturbation parameters in one place)
+- **`normalize.py`**: Parameter normalization utilities extracted from `run.py`
+- **`dimensions.py`**: Sobol dimension calculation extracted from `run.py`
+- **`handlers_legacy.py`**: Consolidated legacy perturbation handlers
+- **Deleted**: `perturb_v2.py`, `registry_init.py`, 20+ stale root files
+
+## New Features
+
+### Antisite/Substitution (`antisite.py`)
+- `get_equivalent_sites(atoms, symprec)` → spglib Wyckoff symmetry groups
+- `generate_antiste_defects(structure, swap_pairs, num_swaps, mode, rng_values)`
+- Modes: `symmetry_aware` (Sobol-friendly) | `random`
+- Sobol dim = `num_swaps`; spglib optional with fallback
+
+### Symmetry-Preserving Strain (`symmetry_strain.py`)
+- `CRYSTAL_SYSTEM_STRAIN_DIMS`: cubic(1) → triclinic(6)
+- `build_symmetric_strain_tensor(system, strains)` → 3×3 symmetric tensor
+- `generate_symmetry_preserving_strain(atoms, strain_fraction, ...)` → full pipeline
+- Replaces generic cell perturbation when `sym_strain=True` (`d_cell=0`)
+
+### Compatibility Checks (`compatibility.py`)
+- `validate_compatibility(**kwargs)` → called at `perturb()` entry
+- Mutex: `{sym_strain, cell_pert}`, `{amorphous, dislocation|twinning|gb|sf|surface}`
+- Dependencies: `vacancy→vac_elements`, `antisite→antisite_pairs`
+
+## Robustness & Bug Fixes
+- Bare `except:` → specific exceptions
+- Negative volume protection, NaN/Inf checks
+- `_safe_*` wrappers enabled
+- Volume perturbation double-execution bug fixed
+- Sobol `consumed_d` tracking corrected
+
+## Test Coverage
+- **55 new tests**: 13 antisite + 23 symmetry_strain + 19 compatibility
+- All pass ✅, backward compatible ✅
