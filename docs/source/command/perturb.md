@@ -111,6 +111,60 @@ NepTrain perturb <model_path> [options]
 - `--amorphous-steps`
   Relaxation steps. Default: `100`.
 
+**Antisite Defects:**
+- `--antisite`
+  Generate antisite (substitutional) defects.
+- `--antisite-pairs`
+  Element pairs to swap (comma-separated, e.g. 'Fe,Al' or 'Fe,Al;Cr,Fe').
+- `--antisite-num`
+  Number of antisite swaps per structure. Default: `1`.
+- `--antisite-mode`
+  Antisite generation mode: `symmetry_aware` (default) or `random`.
+- `--antisite-symprec`
+  Symmetry precision for spglib analysis. Default: `1e-2`.
+
+**Symmetry-Preserving Strain:**
+- `--sym-strain`
+  Apply crystal-symmetry-preserving strain instead of generic cell perturbation.
+- `--sym-strain-fraction`
+  Maximum strain magnitude. Default: `0.03`.
+- `--sym-strain-crystal-system`
+  Override crystal system detection (e.g. 'cubic', 'tetragonal'). Default: auto-detect.
+- `--sym-strain-symprec`
+  Symmetry precision for crystal system detection. Default: `1e-2`.
+
+**Volume Perturbation:**
+- `--vol-pert-fraction`
+  Volume perturbation magnitude (fraction). Default: `0.0` (disabled).
+
+**Rigid Body:**
+- `--rigid`
+  Enable rigid body perturbation.
+- `--rigid-method`
+  Rigid body method: `auto` (default), `manual`.
+- `--rigid-list`
+  Manual atom group specification.
+- `--rigid-mode`
+  Mode: `inter` (default) or `intra`.
+- `--rigid-composition`
+  Composition-based grouping.
+
+**Cell Rotation:**
+- `--rotate-cell`
+  Randomly rotate the unit cell.
+
+**Filtering & Validation:**
+- `--filter-bonds`
+  Filter structures by bond length criteria.
+- `--validate-structure`
+  Validate generated structures. Default: `True`.
+- `--validate-coefficient`
+  Validation coefficient threshold.
+- `--similarity-threshold`
+  Maximum similarity between structures. Default: `0.999`.
+- `--debug-plot`
+  Generate debug plots. Default: `False`.
+
 ## Advanced Features
 
 ### 1. Magnetic Perturbation
@@ -130,6 +184,12 @@ NepTrain perturb water_box.xyz --rotate-formula H2O
   ```bash
   NepTrain perturb bulk.vasp --vac-elements Fe,O --vac-num 2
   ```
+- **Antisite Defects**: Swap atoms between symmetry-equivalent Wyckoff sites.
+  ```bash
+  NepTrain perturb fe3al.vasp --antisite --antisite-pairs Fe,Al --antisite-num 1
+  ```
+  Supports multiple pairs: `--antisite-pairs 'Fe,Al;Cr,Fe'`
+  Use `--antisite-mode random` for random selection (no spglib required).
 - **Atomic Shuffling**: Swap positions of specific species to simulate anti-site defects or solid solutions.
   ```bash
   NepTrain perturb alloy.vasp --shuffle-elements Fe,Ni
@@ -168,6 +228,27 @@ Use Sobol sequences for efficient coverage of high-dimensional parameter spaces 
   # Resume later
   NepTrain perturb structure.vasp --sampler sobol -n 50 --state-file state.json --resume
   ```
+
+### 7. Symmetry-Preserving Strain
+Apply strain that respects crystal symmetry, reducing Sobol dimensions significantly.
+- **Cubic**: 1 independent strain (uniform hydrostatic)
+- **Tetragonal/Hexagonal/Trigonal**: 2 independent strains (in-plane + out-of-plane)
+- **Orthorhombic**: 3 independent strains
+- **Monoclinic**: 4 independent strains
+- **Triclinic**: 6 independent strains (equivalent to generic cell perturbation)
+```bash
+NepTrain perturb fe3al.vasp --sym-strain --sym-strain-fraction 0.03
+# Override crystal system (skip spglib detection)
+NepTrain perturb structure.vasp --sym-strain --sym-strain-crystal-system cubic
+```
+**Note**: `--sym-strain` is mutually exclusive with `--cell` (generic cell perturbation). When enabled, generic cell deformation is automatically disabled.
+
+### 8. Compatibility Checks
+The perturb module automatically validates parameter combinations at entry:
+- **Mutual exclusion**: `sym_strain` ⊥ `cell_pert`, `amorphous` ⊥ `dislocation/twinning/gb/stacking_fault/surface`
+- **Dependencies**: `vacancy` requires `vac_elements` and `vac_num > 0`; `antisite` requires `antisite_pairs`
+- **Warnings**: `amorphous + shuffle`, `amorphous + rigid` (may not add meaningful diversity)
+- Conflicts raise `ValueError` before any computation begins.
 
 ## Python API Reference
 
@@ -225,6 +306,50 @@ def apply_magnetic_perturbation(atoms: Atoms, mode='collinear', mag_config=None,
 #### `rotate_fragments_by_formula`
 ```python
 def rotate_fragments_by_formula(atoms: Atoms, formula: str, mult=1.2, seed=None) -> Atoms
+```
+
+#### `generate_antisite_defects`
+```python
+def generate_antisite_defects(
+    structure: Atoms,
+    swap_pairs: list[tuple[str, str]],
+    num_swaps: int = 1,
+    mode: str = 'symmetry_aware',  # 'symmetry_aware' | 'random'
+    rng_values: np.ndarray | None = None,
+    symprec: float = 1e-2,
+) -> tuple[Atoms, dict]
+```
+
+#### `get_equivalent_sites`
+```python
+def get_equivalent_sites(atoms: Atoms, symprec: float = 1e-2) -> dict[str, list[list[int]]]
+```
+
+#### `generate_symmetry_preserving_strain`
+```python
+def generate_symmetry_preserving_strain(
+    atoms: Atoms,
+    strain_fraction: float = 0.03,
+    crystal_system: str | None = None,
+    symprec: float = 1e-2,
+    rng_values: np.ndarray | None = None,
+    min_distance: float = 0.1,
+) -> tuple[Atoms, dict]
+```
+
+#### `detect_crystal_system_spglib`
+```python
+def detect_crystal_system_spglib(atoms: Atoms, symprec: float = 1e-2) -> str
+```
+
+#### `get_independent_strain_count`
+```python
+def get_independent_strain_count(crystal_system: str) -> int
+```
+
+#### `validate_compatibility`
+```python
+def validate_compatibility(**kwargs) -> list[str]  # warnings; raises ValueError on conflicts
 ```
 
 ## Troubleshooting
