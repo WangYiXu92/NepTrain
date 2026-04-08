@@ -7,6 +7,10 @@ import argparse
 import sys
 sys.path.append('../../')
 from NepTrain.core import *
+from NepTrain.core.predict import run_predict
+from NepTrain.core.gpumd.thermo import run_thermo
+from NepTrain.core.train.status import run_status
+from NepTrain.core.nep.run import plot_nep_result_cli
 from NepTrain import __version__
 import warnings
 from dpdispatcher.dlog import dlog_stdout, dlog
@@ -556,28 +560,98 @@ def build_dft(subparsers):
 
 
 
+def build_predict(subparsers):
+    parser_predict = subparsers.add_parser(
+        "predict",
+        help="Predict energies, forces, and virials using a trained NEP model.",
+    )
+    parser_predict.set_defaults(func=run_predict)
+
+    parser_predict.add_argument("input_path",
+                                type=str,
+                                help="Input structure file (extxyz format).")
+    parser_predict.add_argument("--nep", "-nep",
+                                dest="nep_path",
+                                type=str,
+                                default="./nep.txt",
+                                help="Path to NEP model file (default: ./nep.txt).")
+    parser_predict.add_argument("--out", "-o",
+                                dest="output_path",
+                                type=str,
+                                default="./predicted.xyz",
+                                help="Output file path (default: ./predicted.xyz).")
+    parser_predict.add_argument("--append", "-a",
+                                dest="append",
+                                action="store_true",
+                                default=False,
+                                help="Append to existing output file (default: False).")
+
+
+def build_thermo(subparsers):
+    parser_thermo = subparsers.add_parser(
+        "thermo",
+        help="Post-process GPUMD thermodynamic data (thermo.out).",
+    )
+    parser_thermo.set_defaults(func=run_thermo)
+
+    parser_thermo.add_argument("thermo_file",
+                               type=str,
+                               help="Path to thermo.out file.")
+    parser_thermo.add_argument("--plot",
+                               action="store_true",
+                               default=False,
+                               help="Generate thermo plot (thermo.png).")
+    parser_thermo.add_argument("--last", "-l",
+                               dest="last_n",
+                               type=int,
+                               default=0,
+                               help="Only analyze the last N steps (skip equilibration). Default: 0 (all steps).")
+
+
+def build_status(subparsers):
+    parser_status = subparsers.add_parser(
+        "status",
+        help="Report current training progress.",
+    )
+    parser_status.set_defaults(func=run_status)
+
+    parser_status.add_argument("work_path",
+                               type=str,
+                               nargs="?",
+                               default="./cache",
+                               help="Path to the training work directory (default: ./cache).")
+
+
 def build_nep(subparsers):
     parser_nep = subparsers.add_parser(
         "nep",
         help="Train potential functions using NEP.",
     )
-    parser_nep.set_defaults(func=run_nep)
 
+    # Use sub-subparsers for nep subcommands
+    nep_subparsers = parser_nep.add_subparsers(dest="nep_command")
 
-    parser_nep.add_argument("--directory", "-dir",
+    # --- nep train (default, backward-compatible) ---
+    parser_nep_train = nep_subparsers.add_parser(
+        "train",
+        help="Train NEP potential (default action).",
+    )
+    parser_nep_train.set_defaults(func=run_nep)
+
+    parser_nep_train.add_argument("--directory", "-dir",
                              type=str,
                              help="Set the path for NEP calculations. default ./cache/nep",
                              default="./cache/nep"
                              )
 
-    parser_nep.add_argument("--in", "-in",
+    parser_nep_train.add_argument("--in", "-in",
                             dest="nep_in_path",
                              type=str,
                              help="Set the path for the nep.in file; if not present, generate it based on train.xyz. default ./nep.in",
                              default="./nep.in"
                              )
 
-    parser_nep.add_argument("--train", "-train",
+    parser_nep_train.add_argument("--train", "-train",
                              dest="train_path",
 
                              type=str,
@@ -585,28 +659,28 @@ def build_nep(subparsers):
                              default="./train.xyz"
                              )
 
-    parser_nep.add_argument("--test", "-test",
+    parser_nep_train.add_argument("--test", "-test",
                              dest="test_path",
                              type=str,
                              help="Set the path for the test.xyz file, default is ./test.xyz.",
                              default="./test.xyz"
                              )
 
-    parser_nep.add_argument("--nep", "-nep",
+    parser_nep_train.add_argument("--nep", "-nep",
                             dest="nep_txt_path",
                              type=str,
                              help="restart and prediction require the use of a potential function, default is ./nep.txt.",
                              default="./nep.txt"
                              )
 
-    parser_nep.add_argument("--prediction", "-pred","--pred",
+    parser_nep_train.add_argument("--prediction", "-pred","--pred",
 
                              action="store_true",
                              help="Set the forecast mode, default False",
                              default=False
                              )
 
-    parser_nep.add_argument("--restart_file", "-restart","--restart",
+    parser_nep_train.add_argument("--restart_file", "-restart","--restart",
 
                             type=str,
 
@@ -614,6 +688,67 @@ def build_nep(subparsers):
                              default=None
                              )
 
+    parser_nep_train.add_argument("--continue_step", "-cs",
+                            type=int,
+                            help="If a restart_file is provided, this parameter will take effect, continuing for continue_step steps, with a default value of 10000.",
+                             default=10000
+                             )
+
+    # --- nep result ---
+    parser_nep_result = nep_subparsers.add_parser(
+        "result",
+        help="Plot NEP training results (loss curve, energy/force/virial parity).",
+    )
+    parser_nep_result.set_defaults(func=plot_nep_result_cli)
+    parser_nep_result.add_argument("--directory", "-dir",
+                                   type=str,
+                                   default="./cache/nep",
+                                   help="NEP output directory (default: ./cache/nep).")
+
+    # Backward compatibility: if no subcommand is given, default to 'train'
+    parser_nep.set_defaults(func=run_nep)
+
+    # Copy the train arguments to the parent parser for backward compat
+    # (so `NepTrain nep --train train.xyz` still works without subcommand)
+    parser_nep.add_argument("--directory", "-dir",
+                             type=str,
+                             help="Set the path for NEP calculations. default ./cache/nep",
+                             default="./cache/nep"
+                             )
+    parser_nep.add_argument("--in", "-in",
+                            dest="nep_in_path",
+                             type=str,
+                             help="Set the path for the nep.in file; if not present, generate it based on train.xyz. default ./nep.in",
+                             default="./nep.in"
+                             )
+    parser_nep.add_argument("--train", "-train",
+                             dest="train_path",
+                             type=str,
+                             help="Set the path for the train.xyz file, default  ./train.xyz.",
+                             default="./train.xyz"
+                             )
+    parser_nep.add_argument("--test", "-test",
+                             dest="test_path",
+                             type=str,
+                             help="Set the path for the test.xyz file, default is ./test.xyz.",
+                             default="./test.xyz"
+                             )
+    parser_nep.add_argument("--nep", "-nep",
+                            dest="nep_txt_path",
+                             type=str,
+                             help="restart and prediction require the use of a potential function, default is ./nep.txt.",
+                             default="./nep.txt"
+                             )
+    parser_nep.add_argument("--prediction", "-pred","--pred",
+                             action="store_true",
+                             help="Set the forecast mode, default False",
+                             default=False
+                             )
+    parser_nep.add_argument("--restart_file", "-restart","--restart",
+                            type=str,
+                            help="To restart running, simply provide a valid path; default is None.",
+                             default=None
+                             )
     parser_nep.add_argument("--continue_step", "-cs",
                             type=int,
                             help="If a restart_file is provided, this parameter will take effect, continuing for continue_step steps, with a default value of 10000.",
@@ -752,6 +887,9 @@ def main():
     build_nep(subparsers)
     build_gpumd(subparsers)
     build_train(subparsers)
+    build_predict(subparsers)
+    build_thermo(subparsers)
+    build_status(subparsers)
 
 
 

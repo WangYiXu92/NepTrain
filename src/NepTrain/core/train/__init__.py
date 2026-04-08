@@ -4,3 +4,4 @@
 # @Author  : 兵
 # @email    : 1747193328@qq.com
 from .run import train_nep
+from .status import check_status, run_status
