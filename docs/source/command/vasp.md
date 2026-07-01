@@ -29,6 +29,10 @@ The Vasp calculation allows the use of the `INCAR` file as a template, which ena
   Enable magnetic moments in the calculation. Default: `False`.
   **Note**: By default, `I_CONSTRAINED_M=1` (constrained direction) is set to preserve the initial magnetic configuration.
   If the input structure has no magnetic moments, default values will be loaded from the `[magmom]` section in `.NepTrain` or `config.ini` (e.g., `Fe = 2.2`).
+  Magnetic outputs are exported with vector extended-XYZ arrays `spin:R:3`,
+  `moment:R:3`, and `torque:R:3`. `spin` records the constrained/input spin
+  vector, `moment` records DFT per-atom magnetic moments when available, and
+  `torque` is written as DFT torques when available or zero vectors otherwise.
 - `--mag-relax`
   Allow magnetic moment direction/size relaxation (disables `I_CONSTRAINED_M=1`). Use this if you want the magnetic moments to relax to the ground state.
 - `-kspacing`  

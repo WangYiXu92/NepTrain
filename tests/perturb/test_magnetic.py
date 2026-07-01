@@ -80,5 +80,13 @@ class TestMagnetic(unittest.TestCase):
             moms = np.linalg.norm(moms, axis=1)
         np.testing.assert_array_equal(moms, [0.0, 0.0])
 
+    def test_vector_mag_config_is_preserved_by_ensure(self):
+        """Vector config values should initialize non-collinear moments directly."""
+        from NepTrain.core.perturb.magnetic import ensure_magnetic_configuration
+        atoms = Atoms('Fe2', positions=[[0,0,0], [2,0,0]])
+        ensure_magnetic_configuration(atoms, mag_config={'Fe': [2.0, 0.0, 0.5]})
+        expected = np.array([[2.0, 0.0, 0.5], [2.0, 0.0, 0.5]])
+        np.testing.assert_allclose(atoms.get_initial_magnetic_moments(), expected)
+
 if __name__ == '__main__':
     unittest.main()

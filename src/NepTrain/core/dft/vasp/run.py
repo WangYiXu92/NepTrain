@@ -20,7 +20,7 @@ from NepTrain.core.perturb.magnetic import ensure_magnetic_configuration, get_ma
 from NepTrain.core.perturb.vacancy import _filter_vacancies_for_export
 from NepTrain.exceptions import CalculationError
 
-from .io import VaspInput,write_to_xyz
+from .io import VaspInput, write_to_xyz, attach_magnetic_exyz_arrays
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,9 @@ def calculate_vasp(atoms: Atoms, argparse, index: int = None):
             calculate_vasp._counter = itertools.count(1)
         atoms_index = next(calculate_vasp._counter)
 
-    if getattr(argparse, 'use_mag', False):
+    existing_magmoms = atoms.get_initial_magnetic_moments()
+    use_mag = getattr(argparse, 'use_mag', False) or np.any(existing_magmoms)
+    if use_mag:
         # Ensure magnetic configuration is present (from file or config)
         atoms = ensure_magnetic_configuration(atoms)
     else:
@@ -63,9 +65,11 @@ def calculate_vasp(atoms: Atoms, argparse, index: int = None):
     else:
         vasp.read_incar(os.path.join(module_path, "core/dft/vasp/INCAR"))
 
-    # Check for magnetic moments and handle collinear/non-collinear
-    # Ensure magnetic configuration is set (load from config if missing)
-    ensure_magnetic_configuration(atoms)
+    # Check for magnetic moments and handle collinear/non-collinear.
+    # Only auto-fill moments in explicit magnetic mode; non-magnetic runs must
+    # remain non-magnetic.
+    if use_mag:
+        atoms = ensure_magnetic_configuration(atoms)
     magmoms = atoms.get_initial_magnetic_moments()
     
     is_non_collinear = False
@@ -190,12 +194,14 @@ def calculate_vasp(atoms: Atoms, argparse, index: int = None):
         atoms_list = write_to_xyz(
             os.path.join(directory, "vasprun.xml"),
             os.path.join(directory, f"aimd_{vasp.float_params['tebeg']}k_{vasp.float_params['teend']}k.xyz"),
-            "aimd", False
+            "aimd", False, magnetic=use_mag, spin=atoms.get_initial_magnetic_moments()
         )
         return atoms_list
     else:
         vasp.calculate(atoms, ('energy'))
         atoms.calc = vasp._xml_calc
+        if use_mag:
+            attach_magnetic_exyz_arrays(atoms)
         xx, yy, zz, yz, xz, xy = -vasp.results['stress'] * atoms.get_volume()  # *160.21766
         atoms.info['virial'] = np.array([(xx, xy, xz), (xy, yy, yz), (xz, yz, zz)])
         # 这里没想好怎么设计config的格式化  就先使用原来的

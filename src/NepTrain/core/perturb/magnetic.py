@@ -39,10 +39,19 @@ References:
    https://arxiv.org/abs/2211.10740
 """
 
+import configparser
+import os
+from statistics import NormalDist
+
 import numpy as np
 from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from ase import Atoms
+
+# Backward-compatible symbol for older tests/callers that monkeypatch
+# NepTrain.core.perturb.magnetic.Config. This module reads ~/.NepTrain directly
+# to avoid importing NepTrain.Config during package initialization.
+Config = None
 
 
 # =================================================================
@@ -1224,7 +1233,107 @@ class SymmetryAdaptedMagneticGenerator:
 # Standalone Functions
 # =================================================================
 
-def get_magmom_config(atoms: Atoms, magnetic_elements: List[str]) -> Dict[str, float]:
+DEFAULT_MAGNETIC_ELEMENTS = ['Fe', 'Co', 'Ni', 'Mn', 'Gd', 'Cr']
+DEFAULT_MAGNETIC_MOMENTS = {
+    'Fe': 2.2,
+    'Co': 1.7,
+    'Ni': 0.6,
+    'Mn': 3.0,
+    'Gd': 7.0,
+    'Cr': 0.0,  # Antiferromagnetic default magnitude placeholder
+    'Cu': 0.0,  # Non-magnetic
+}
+
+
+def _parse_moment_value(value: Any):
+    """Parse scalar or 3-vector magnetic moment values from config/API input."""
+    if isinstance(value, str):
+        parts = value.replace(',', ' ').split()
+        if len(parts) == 1:
+            return float(parts[0])
+        if len(parts) == 3:
+            return [float(x) for x in parts]
+        raise ValueError(f"magmom value must be scalar or 3-vector, got {value!r}")
+    arr = np.asarray(value, dtype=float)
+    if arr.ndim == 0:
+        return float(arr)
+    if arr.shape == (3,):
+        return arr.astype(float, copy=True).tolist()
+    raise ValueError(f"magmom value must be scalar or 3-vector, got shape {arr.shape}")
+
+
+def _moment_magnitude(value: Any) -> float:
+    parsed = _parse_moment_value(value)
+    if isinstance(parsed, list):
+        return float(np.linalg.norm(np.asarray(parsed, dtype=float)))
+    return float(parsed)
+
+
+def _normalise_mag_config(mag_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return a symbol-normalized magnetic moment mapping."""
+    config = dict(DEFAULT_MAGNETIC_MOMENTS)
+    if mag_config:
+        for key, value in mag_config.items():
+            config[str(key).capitalize()] = _parse_moment_value(value)
+    return config
+
+
+def _load_mag_config_from_file() -> Dict[str, float]:
+    """Read [magmom] defaults from NepTrain config files without importing NepTrain.Config."""
+    candidate_paths = [
+        os.path.join(os.getcwd(), "config.ini"),
+        os.path.expanduser("~/config.ini"),
+        os.path.expanduser("~/.NepTrain"),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../config.ini")),
+    ]
+    parser = configparser.RawConfigParser()
+    parser.read([p for p in candidate_paths if os.path.exists(p)], encoding="utf8")
+    if not parser.has_section("magmom"):
+        return {}
+    loaded = {}
+    for symbol, value in parser.items("magmom"):
+        try:
+            loaded[symbol.capitalize()] = _parse_moment_value(value)
+        except (TypeError, ValueError):
+            continue
+    return loaded
+
+
+def _magnetic_indices(atoms: Atoms, mag_config: Dict[str, float], magnetic_elements: Optional[List[str]] = None) -> List[int]:
+    if magnetic_elements is None:
+        magnetic_elements = list(mag_config.keys())
+    magnetic_set = {str(e).capitalize() for e in magnetic_elements}
+    return [i for i, atom in enumerate(atoms) if atom.symbol in magnetic_set and atom.symbol in mag_config]
+
+
+def _uniform_to_normal(value: float) -> float:
+    clipped = min(max(float(value), 1e-12), 1.0 - 1e-12)
+    return NormalDist().inv_cdf(clipped)
+
+
+def _vectors_from_magmoms(magmoms: np.ndarray, n_atoms: int) -> np.ndarray:
+    """Convert ASE scalar or vector magnetic moments to an (N, 3) array."""
+    if magmoms is None:
+        return np.zeros((n_atoms, 3), dtype=float)
+    arr = np.asarray(magmoms, dtype=float)
+    if arr.size == 0:
+        return np.zeros((n_atoms, 3), dtype=float)
+    if arr.ndim == 1:
+        if arr.shape[0] != n_atoms:
+            raise ValueError(f"Expected {n_atoms} scalar magnetic moments, got {arr.shape[0]}")
+        out = np.zeros((n_atoms, 3), dtype=float)
+        out[:, 2] = arr
+        return out
+    if arr.ndim == 2 and arr.shape == (n_atoms, 3):
+        return arr.astype(float, copy=True)
+    raise ValueError(f"Magnetic moments must have shape ({n_atoms},) or ({n_atoms}, 3), got {arr.shape}")
+
+
+def get_magmom_config(
+    atoms: Optional[Atoms] = None,
+    magnetic_elements: Optional[List[str]] = None,
+    mag_config: Optional[Dict[str, float]] = None,
+) -> Dict[str, float]:
     """
     Get magnetic moment configuration for magnetic elements.
     
@@ -1238,32 +1347,45 @@ def get_magmom_config(atoms: Atoms, magnetic_elements: List[str]) -> Dict[str, f
     Returns:
         Dictionary mapping element symbols to default magnetic moments
     """
-    # Default magnetic moments for common magnetic elements
-    default_moments = {
-        'Fe': 2.2,
-        'Co': 1.7,
-        'Ni': 0.6,
-        'Mn': 3.0,
-        'Gd': 7.0,
-        'Cr': 0.0,  # Antiferromagnetic
-        'Cu': 0.0,  # Non-magnetic
-    }
-    
-    config = {}
+    config = _normalise_mag_config()
+    config.update(_load_mag_config_from_file())
+    if Config is not None:
+        try:
+            if 'magmom' in Config:
+                config.update({str(k).capitalize(): _parse_moment_value(v) for k, v in Config['magmom'].items()})
+        except Exception:
+            pass
+    else:
+        try:
+            from NepTrain import Config as RuntimeConfig
+            if RuntimeConfig.has_section('magmom'):
+                config.update({str(k).capitalize(): _parse_moment_value(v) for k, v in RuntimeConfig.items('magmom')})
+        except Exception:
+            pass
+    if mag_config:
+        for key, value in mag_config.items():
+            config[str(key).capitalize()] = _parse_moment_value(value)
+
+    if atoms is not None and magnetic_elements is None:
+        magnetic_elements = sorted({atom.symbol for atom in atoms if atom.symbol in config})
+    if magnetic_elements is None:
+        magnetic_elements = DEFAULT_MAGNETIC_ELEMENTS
+
+    selected = {}
     for element in magnetic_elements:
         symbol = element.capitalize()
-        if symbol in default_moments:
-            config[symbol] = default_moments[symbol]
-        else:
-            config[symbol] = 1.0  # Default: 1 Bohr magneton
-    
-    return config
+        selected[symbol] = _parse_moment_value(config.get(symbol, 1.0))
+
+    return selected
 
 
 def get_magnetic_perturbation_dims(
     atoms: Atoms, 
     mode: str = 'collinear',
-    magnetic_elements: Optional[List[str]] = None
+    magnetic_elements: Optional[List[str]] = None,
+    mag_config: Optional[Dict[str, float]] = None,
+    noise: float = 0.0,
+    **kwargs,
 ) -> int:
     """
     Get the dimension of the magnetic perturbation space.
@@ -1276,28 +1398,34 @@ def get_magnetic_perturbation_dims(
     Returns:
         Number of magnetic degrees of freedom
     """
-    if magnetic_elements is None:
-        # Auto-detect magnetic elements
-        magnetic_elements = ['Fe', 'Co', 'Ni', 'Mn', 'Gd', 'Cr']
-    
-    n_magnetic = sum(
-        1 for atom in atoms 
-        if atom.symbol in magnetic_elements
-    )
-    
-    if mode == 'collinear':
-        return n_magnetic
-    elif mode == 'non-collinear':
-        return 3 * n_magnetic
-    else:
-        return n_magnetic
+    config = get_magmom_config(atoms, magnetic_elements, mag_config)
+    n_magnetic = len(_magnetic_indices(atoms, config, magnetic_elements))
+    mode_norm = mode.replace('-', '_')
+
+    axis = kwargs.get('axis', None)
+    axis_dims = 2 if isinstance(axis, str) and axis.lower() == 'random' and mode_norm in {'collinear', 'random_collinear'} else 0
+    noise_dims = n_magnetic if noise and abs(float(noise)) > 0 else 0
+    if mode_norm == 'collinear':
+        return axis_dims + noise_dims
+    if mode_norm == 'random_collinear':
+        return axis_dims + n_magnetic + noise_dims
+    if mode_norm == 'non_collinear':
+        return 2 * n_magnetic + noise_dims
+    return n_magnetic + noise_dims
 
 
 def apply_magnetic_perturbation(
     atoms: Atoms,
     mode: str = 'collinear',
     magnetic_elements: Optional[List[str]] = None,
-    moment_magnitude: float = 0.1
+    moment_magnitude: Optional[float] = None,
+    mag_config: Optional[Dict[str, float]] = None,
+    flip_prob: float = 0.5,
+    noise: float = 0.0,
+    rng_values: Optional[np.ndarray] = None,
+    seed: Optional[int] = None,
+    axis: Any = (0.0, 0.0, 1.0),
+    **kwargs,
 ) -> Atoms:
     """
     Apply small magnetic perturbation to the structure.
@@ -1312,30 +1440,97 @@ def apply_magnetic_perturbation(
         New Atoms object with magnetic moments applied
     """
     structure = atoms.copy()
-    
-    if magnetic_elements is None:
-        magnetic_elements = ['Fe', 'Co', 'Ni', 'Mn', 'Gd', 'Cr']
-    
-    mag_moments = np.zeros(len(structure))
-    
-    for i, atom in enumerate(structure):
-        if atom.symbol in magnetic_elements:
-            if mode == 'collinear':
-                mag_moments[i] = moment_magnitude
-            else:
-                # Non-collinear: random direction
-                direction = np.random.rand(3)
-                direction /= np.linalg.norm(direction)
-                mag_moments[i] = moment_magnitude * direction[0]
-    
+    config = get_magmom_config(structure, magnetic_elements, mag_config)
+    magnetic_idx = _magnetic_indices(structure, config, magnetic_elements)
+    mag_moments = np.zeros((len(structure), 3), dtype=float)
+    if not magnetic_idx:
+        structure.set_initial_magnetic_moments(mag_moments)
+        return structure
+
+    rng = np.random.default_rng(seed) if seed is not None else None
+    rng_values = None if rng_values is None else np.asarray(rng_values, dtype=float).ravel()
+    cursor = 0
+
+    def take_uniform(count: int) -> np.ndarray:
+        nonlocal cursor
+        if count <= 0:
+            return np.array([], dtype=float)
+        if rng_values is not None:
+            if cursor + count > len(rng_values):
+                raise ValueError(f"Not enough random values for magnetic perturbation. Needed {cursor + count}, got {len(rng_values)}.")
+            values = rng_values[cursor:cursor + count]
+            cursor += count
+            return values
+        if rng is not None:
+            return rng.random(count)
+        return np.random.random(count)
+
+    mode_norm = mode.replace('-', '_')
+    magnitudes = []
+    for idx in magnetic_idx:
+        base = float(moment_magnitude) if moment_magnitude is not None else _moment_magnitude(config.get(structure[idx].symbol, 1.0))
+        magnitudes.append(base)
+    magnitudes = np.asarray(magnitudes, dtype=float)
+
+    if mode_norm == 'random_collinear':
+        flips = take_uniform(len(magnetic_idx)) < float(flip_prob)
+    else:
+        flips = np.zeros(len(magnetic_idx), dtype=bool)
+
+    axis_vector = None
+    if mode_norm in {'collinear', 'random_collinear'}:
+        if isinstance(axis, str) and axis.lower() == 'random':
+            u_axis = take_uniform(2)
+            cos_theta = 2.0 * u_axis[0] - 1.0
+            sin_theta = np.sqrt(max(1.0 - cos_theta**2, 0.0))
+            phi = 2.0 * np.pi * u_axis[1]
+            axis_vector = np.array([sin_theta * np.cos(phi), sin_theta * np.sin(phi), cos_theta], dtype=float)
+        else:
+            axis_vector = np.asarray(axis, dtype=float)
+            if axis_vector.shape != (3,):
+                raise ValueError(f"axis must be 'random' or a 3-vector, got {axis}")
+            norm = np.linalg.norm(axis_vector)
+            if norm <= 1e-15:
+                raise ValueError("axis vector norm must be non-zero")
+            axis_vector = axis_vector / norm
+
+    if noise and abs(float(noise)) > 0:
+        u_noise = take_uniform(len(magnetic_idx))
+        z_noise = np.array([_uniform_to_normal(v) for v in u_noise])
+        magnitudes = np.maximum(magnitudes + float(noise) * z_noise, 0.0)
+
+    if mode_norm in {'collinear', 'random_collinear'}:
+        signs = np.where(flips, -1.0, 1.0)
+        for local_i, atom_i in enumerate(magnetic_idx):
+            mag_moments[atom_i] = signs[local_i] * magnitudes[local_i] * axis_vector
+    elif mode_norm == 'non_collinear':
+        u = take_uniform(2 * len(magnetic_idx)).reshape(len(magnetic_idx), 2)
+        cos_theta = 2.0 * u[:, 0] - 1.0
+        sin_theta = np.sqrt(np.maximum(1.0 - cos_theta**2, 0.0))
+        phi = 2.0 * np.pi * u[:, 1]
+        directions = np.column_stack((sin_theta * np.cos(phi), sin_theta * np.sin(phi), cos_theta))
+        for local_i, atom_i in enumerate(magnetic_idx):
+            mag_moments[atom_i] = magnitudes[local_i] * directions[local_i]
+    else:
+        raise ValueError("mode must be one of 'collinear', 'random_collinear', or 'non_collinear'")
+
+    if not np.isfinite(mag_moments).all():
+        raise ValueError("Generated magnetic moments contain NaN or Inf")
     structure.set_initial_magnetic_moments(mag_moments)
+    structure.info['perturb_annotation'] = {
+        'type': 'magnetic',
+        'mode': mode_norm,
+        'axis': axis_vector.tolist() if axis_vector is not None else None,
+        'n_magnetic': len(magnetic_idx),
+    }
     return structure
 
 
 def ensure_magnetic_configuration(
     atoms: Atoms,
-    magnetic_elements: List[str],
-    moment_magnitude: float = 2.0
+    magnetic_elements: Optional[List[str]] = None,
+    moment_magnitude: Optional[float] = None,
+    mag_config: Optional[Dict[str, float]] = None,
 ) -> Atoms:
     """
     Ensure magnetic configuration for magnetic elements.
@@ -1348,16 +1543,26 @@ def ensure_magnetic_configuration(
     Returns:
         Atoms object with guaranteed magnetic moments
     """
-    structure = atoms.copy()
-    
-    mag_moments = np.zeros(len(structure))
-    
-    for i, atom in enumerate(structure):
-        if atom.symbol in magnetic_elements:
-            mag_moments[i] = moment_magnitude
-    
-    structure.set_initial_magnetic_moments(mag_moments)
-    return structure
+    config = get_magmom_config(atoms, magnetic_elements, mag_config)
+    existing = _vectors_from_magmoms(atoms.get_initial_magnetic_moments(), len(atoms))
+    if np.any(np.linalg.norm(existing, axis=1) > 0):
+        atoms.set_initial_magnetic_moments(existing)
+        return atoms
+
+    mag_moments = np.zeros((len(atoms), 3), dtype=float)
+    for i, atom in enumerate(atoms):
+        if atom.symbol in config:
+            if moment_magnitude is not None:
+                mag_moments[i, 2] = float(moment_magnitude)
+            else:
+                parsed = _parse_moment_value(config[atom.symbol])
+                if isinstance(parsed, list):
+                    mag_moments[i] = np.asarray(parsed, dtype=float)
+                else:
+                    mag_moments[i, 2] = float(parsed)
+
+    atoms.set_initial_magnetic_moments(mag_moments)
+    return atoms
 
 
 def generate_symmetry_adapted_magnetic_structures(

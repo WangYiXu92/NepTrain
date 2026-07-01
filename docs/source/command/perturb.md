@@ -56,6 +56,9 @@ NepTrain perturb <model_path> [options]
   Spin flip probability for `random_collinear`. Default: `0.5`.
 - `--mag-noise`
   Gaussian noise for magnetic moment magnitudes. Default: `0.0`.
+  Magnetic perturbations now write ASE vector initial moments `(N, 3)` for all
+  magnetic modes. Collinear modes use the z axis by default; internal APIs also
+  support `axis='random'` for Sobol-driven random collinear axes.
 
 **Topological Generation:**
 - `--surface`
@@ -171,7 +174,12 @@ NepTrain perturb <model_path> [options]
 Create diverse training datasets for magnetic materials.
 - **collinear**: Sets initial magnetic moments based on configuration.
 - **random_collinear**: Randomly flips spins (up/down).
-- **non_collinear**: Generates random 3D magnetic moment vectors.
+- **non_collinear**: Generates random 3D magnetic moment vectors with preserved
+  moment magnitude.
+
+For magnetic NEP training, generated structures keep full vector moments rather
+than scalar collinear `MAGMOM` values. This is required for downstream
+`spin:R:3`, `moment:R:3`, and `torque:R:3` extended XYZ export.
 
 ### 2. Fragment Rotation
 Rotate rigid molecules or clusters (e.g., water in hydrates, octahedra) while preserving internal geometry.

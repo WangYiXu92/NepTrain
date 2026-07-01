@@ -349,6 +349,8 @@ def perturb(atoms: Atoms,
 
     # Check if Sobol sampler is used
     use_sobol = (sampler == 'sobol')
+    seed = kwargs.get('seed', None)
+    start_index = 0
     
     # Pre-load mag_config to avoid redundant parsing
     mag_config = None
@@ -462,6 +464,14 @@ def perturb(atoms: Atoms,
         twinning_indices = dims['twinning_indices']
         sf_normal = dims['sf_normal']
         sf_shift = dims['sf_shift']
+
+        if total_d <= 0:
+            total_d = 1
+        s_sampler = SobolSampler(d=total_d, scramble=scramble, seed=seed)
+        if resume and state_file:
+            state = _load_state(state_file)
+            if state and state.get('num_generated', 0) > 0:
+                s_sampler.random(n=int(state['num_generated']))
 
     # Pre-calculate base bond lengths if filtering
     base_bond = None
@@ -1255,7 +1265,7 @@ def perturb(atoms: Atoms,
                 if 'sim_filter' not in locals():
                     sim_filter = SimilarityFilter(threshold=similarity_threshold)
             
-                if similarity_threshold < 1.0:
+                if similarity_threshold < 1.0 and not mag_mode:
                     if sim_filter.is_redundant(struct):
                         continue
 
@@ -1690,7 +1700,9 @@ def _safe_apply_magnetic_perturbation(atoms: Atoms, **kwargs) -> Atoms:
     """
     try:
         return apply_magnetic_perturbation(atoms, **kwargs)
-    except Exception as e:
+    except ValueError as e:
+        if "Not enough random values" in str(e):
+            raise
         raise PerturbationError(
             f"Magnetic perturbation failed: {e}",
             operation="magnetic",

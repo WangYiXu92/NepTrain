@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Magnetic perturbation and VASP magnetic exyz
+
+- Restored `apply_magnetic_perturbation()` compatibility with `mag_config`, `noise`, `rng_values`, and `flip_prob`.
+- Magnetic perturbations now write vector initial moments `(N, 3)` for `collinear`, `random_collinear`, and `non_collinear` modes.
+- Added deterministic Sobol/random-axis magnetic perturbation support via `axis='random'`.
+- Fixed VASP magnetic mode so non-magnetic runs do not get moments auto-filled accidentally.
+- Added magnetic extended XYZ export arrays: `spin:R:3`, `moment:R:3`, and `torque:R:3`.
+
 ### Added — Perturb Module Refactoring (branch: `refactor/cleanup-and-split-run`)
 
 - **Module Restructuring**:
