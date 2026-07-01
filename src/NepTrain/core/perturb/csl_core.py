@@ -208,11 +208,12 @@ def generate_integer_axes(max_index=3):
 
 # Known CSL data for cubic systems: axis → list of (sigma, angle_deg)
 _CSL_TABLE = {
-    (0, 0, 1): [(5, 36.87), (13, 22.62), (17, 28.07), (25, 16.26), (29, 12.76)],
-    (0, 1, 1): [(3, 70.53), (9, 19.47), (11, 50.48), (17, 86.63), (19, 26.53)],
+    (0, 0, 1): [(5, 36.87), (5, 53.13), (13, 22.62), (13, 67.38), (17, 28.07), (17, 61.93),
+                (25, 16.26), (25, 73.74), (29, 12.76), (29, 77.24)],
+    (0, 1, 1): [(3, 70.53), (9, 19.47), (9, 70.53), (11, 50.48), (17, 86.63), (19, 26.53)],
     (1, 1, 1): [(3, 60.00), (7, 38.21), (13, 27.80), (19, 46.83), (21, 21.79)],
     (1, 1, 0): [(3, 70.53), (9, 38.94), (11, 50.48), (17, 86.63), (19, 26.53)],
-    (1, 0, 0): [(5, 36.87), (13, 22.62), (17, 28.07), (25, 16.26)],
+    (1, 0, 0): [(5, 36.87), (5, 53.13), (13, 22.62), (17, 28.07), (25, 16.26)],
 }
 
 
@@ -228,61 +229,50 @@ def _normalize_axis(axis):
 
 def get_csl_data(axis, max_sigma=100):
     """Return list of CSL (sigma, angle) dicts for a given rotation axis.
-    
-    Falls back to computing from ``find_csl_basis`` for axes not in the table.
+
+    For axes in the known CSL table, returns exact entries.
+    For axes not in the table, returns an empty list (no expensive search).
     """
     key = _normalize_axis(axis)
     data = []
-    
+
     if key in _CSL_TABLE:
         for sigma, angle in _CSL_TABLE[key]:
             if sigma <= max_sigma:
                 data.append({'sigma': sigma, 'angle': angle})
-    else:
-        # Try known sigma values and check if CSL basis exists
-        for sigma in [3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 25, 27, 29, 31]:
-            if sigma > max_sigma:
-                break
-            # Compute angle from sigma for this axis
-            angle = get_csl_angle(list(key), sigma)
-            if angle is not None:
-                data.append({'sigma': sigma, 'angle': angle})
-    
-    if not data:
-        # Default fallback
-        data.append({'sigma': 5, 'angle': 36.87})
-    
+
     return data
 
 
 def get_csl_angle(axis, sigma=None):
     """Compute the CSL rotation angle for a given axis (and optionally sigma).
-    
-    For cubic systems, the rotation angle satisfies:
-        tan(θ/2) = n * sqrt(Σ) / (m * Σ)
-    For simple axes, use known values. Otherwise compute numerically.
+
+    For axes in the known CSL table, returns the exact angle.
+    For unknown axes, returns None (no expensive numerical search).
     """
     key = _normalize_axis(axis)
-    
+
     if sigma is None:
         data = get_csl_data(axis)
         if data:
             return data[0]['angle']
         return None
-    
+
     # Look up in table
     if key in _CSL_TABLE:
         for s, a in _CSL_TABLE[key]:
             if s == sigma:
                 return a
-    
-    # Numerical: try to find an angle where find_csl_basis succeeds
-    for angle in np.linspace(10, 90, 81):
-        try:
-            M, Mp = find_csl_basis(sigma, list(key), angle, limit=5)
-            if M is not None and abs(abs(np.linalg.det(M)) - sigma) < 0.5:
-                return round(angle, 2)
-        except (ValueError, TypeError):
-            continue
-    
+
     return None
+
+
+def sample_random_axis(max_index=3):
+    """Pick a random integer rotation axis from the primitive axis list.
+
+    Returns:
+        list: A random [u, v, w] axis.
+    """
+    axes = generate_integer_axes(max_index=max_index)
+    idx = np.random.randint(len(axes))
+    return axes[idx]

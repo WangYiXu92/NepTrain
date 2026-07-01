@@ -798,7 +798,12 @@ def generate_csl_grain_boundary(
         if to_delete:
             print(f"Deleting {len(to_delete)} overlapping atoms")
             del bicrystal[list(to_delete)]
-    
+
+    bicrystal.info['perturb_annotation'] = {
+        'type': 'grain_boundary',
+        'metadata': {'sigma': sigma, 'axis': list(axis), 'angle': angle}
+    }
+
     return bicrystal
 
 
@@ -1066,7 +1071,12 @@ def generate_grain_boundary_csl(element, sigma, axis, angle, plane=[0, 0, 1], si
         if to_delete:
             print(f"Deleting {len(to_delete)} overlapping atoms")
             del bicrystal[list(to_delete)]
-    
+
+    bicrystal.info['perturb_annotation'] = {
+        'type': 'grain_boundary',
+        'metadata': {'sigma': sigma, 'axis': list(axis), 'angle': angle}
+    }
+
     return bicrystal
 
 
@@ -1079,50 +1089,161 @@ def generate_grain_boundary(atoms_or_element, sigma=None, axis=None, angle=None,
     Accepts both the old API (Atoms first arg + angle_deg/min_dist kwargs)
     and the new API (element string + sigma/axis/angle).
 
-    When an Atoms object is passed as first arg, infers element and creates GB.
+    When ``sigma`` is explicitly provided → use CSL generation.
+    When ``sigma`` is None → use simple rotation (no CSL matching needed).
+
     Maps ``angle_deg`` → ``angle``, ``min_dist`` → ``tol``.
     """
     # Normalize angle
     if angle is None and angle_deg is not None:
         angle = angle_deg
-    if angle is None:
-        angle = 36.87  # default Sigma 5 [001]
     if axis is None:
         axis = [0, 0, 1]
-    if sigma is None:
-        sigma = 5
 
     # Map min_dist → tol
     if min_dist is not None:
         tol = min_dist
 
-    # If first arg is an Atoms object, extract element
+    # ----------------------------------------------------------------
+    # Dual-mode dispatch: CSL vs simple rotation
+    # ----------------------------------------------------------------
+    use_csl = sigma is not None
+
     if isinstance(atoms_or_element, Atoms):
         symbols = set(atoms_or_element.get_chemical_symbols())
-        if len(symbols) == 1:
-            element = symbols.pop()
-        else:
-            element = atoms_or_element.get_chemical_symbols()[0]
-
-        result = generate_grain_boundary_csl(element, sigma=sigma, axis=axis,
-                                              angle=angle, vacuum=vacuum,
-                                              delete_overlap=delete_overlap, tol=tol)
-
-        # Apply translation if specified
-        if translation_frac is not None and result is not None:
-            tx, ty = translation_frac[0], translation_frac[1]
-            pos = result.get_positions()
-            cell = result.get_cell()
-            # Translate upper half of atoms
-            mid_z = (pos[:, 2].max() + pos[:, 2].min()) / 2
-            upper = pos[:, 2] > mid_z
-            pos[upper, 0] += tx * cell[0, 0]
-            pos[upper, 1] += ty * cell[1, 1]
-            result.set_positions(pos)
-        return result
+        element = symbols.pop() if len(symbols) == 1 else atoms_or_element.get_chemical_symbols()[0]
+        source_atoms = atoms_or_element
     else:
-        # element string — original API
-        return generate_grain_boundary_csl(atoms_or_element, sigma=sigma,
-                                            axis=axis, angle=angle,
-                                            vacuum=vacuum,
-                                            delete_overlap=delete_overlap, tol=tol)
+        element = atoms_or_element
+        source_atoms = None
+
+    if use_csl:
+        # CSL mode — requires exact CSL matching
+        result = generate_grain_boundary_csl(
+            element, sigma=sigma, axis=axis, angle=angle or 36.87,
+            vacuum=vacuum, delete_overlap=delete_overlap, tol=tol)
+    else:
+        # Simple rotation mode — no CSL, just rotate and stack
+        result = _generate_simple_rotation_gb(
+            element, axis=axis, angle_deg=angle or 30.0,
+            vacuum=vacuum, delete_overlap=delete_overlap, tol=tol,
+            source_atoms=source_atoms)
+
+    # Apply translation if specified
+    if translation_frac is not None and result is not None:
+        tx, ty = translation_frac[0], translation_frac[1]
+        pos = result.get_positions()
+        cell = result.get_cell()
+        mid_z = (pos[:, 2].max() + pos[:, 2].min()) / 2
+        upper = pos[:, 2] > mid_z
+        pos[upper, 0] += tx * cell[0, 0]
+        pos[upper, 1] += ty * cell[1, 1]
+        result.set_positions(pos)
+
+    return result
+
+
+def _generate_simple_rotation_gb(element, axis=[0,0,1], angle_deg=30.0,
+                                  vacuum=0.0, delete_overlap=True, tol=1.5,
+                                  source_atoms=None):
+    """Generate a grain boundary by simple rotation without CSL matching.
+
+    Algorithm:
+    1. Build a conventional cubic cell
+    2. Create two supercells stacked along z
+    3. Rotate the upper grain about the given axis by angle_deg
+    4. Optionally remove overlapping atoms
+    """
+    from ase.build import bulk, make_supercell as _make_sc
+
+    if source_atoms is not None:
+        prim = source_atoms.copy()
+    else:
+        prim = bulk(element, cubic=True)
+
+    # Build supercell (2x2x2 for adequate grain size)
+    sc = _make_sc(prim, np.diag([2, 2, 2]))
+
+    # Stack two copies along z
+    grain_a = sc.copy()
+    grain_b = sc.copy()
+
+    # Translate grain_b above grain_a
+    c_vec = grain_a.cell[2]
+    grain_b.translate(c_vec)
+    if vacuum > 0:
+        grain_b.translate(np.array([0, 0, vacuum]))
+
+    bicrystal = grain_a + grain_b
+
+    # Update cell
+    final_cell = grain_a.cell.copy()
+    final_cell[2] = final_cell[2] * 2
+    if vacuum > 0:
+        final_cell[2] = final_cell[2] + np.array([0, 0, vacuum])
+    bicrystal.set_cell(final_cell)
+    bicrystal.pbc = [True, True, True]
+
+    # Rotate upper half of atoms
+    R = get_rotation_matrix_local(axis, angle_deg)
+    pos = bicrystal.get_positions()
+    mid_z = np.mean(pos[:, 2])
+    upper_mask = pos[:, 2] > mid_z
+
+    # Rotate about the midplane
+    pos[upper_mask] -= np.array([0, 0, mid_z])
+    pos[upper_mask] = pos[upper_mask] @ R.T
+    pos[upper_mask] += np.array([0, 0, mid_z])
+    bicrystal.set_positions(pos)
+
+    bicrystal.wrap()
+
+    if delete_overlap:
+        from ase.neighborlist import NeighborList
+        nl = NeighborList([tol / 2] * len(bicrystal), skin=0.0,
+                          self_interaction=False, bothways=True)
+        nl.update(bicrystal)
+
+        to_delete = set()
+        for i in range(len(bicrystal)):
+            if i in to_delete:
+                continue
+            indices, _ = nl.get_neighbors(i)
+            for j in indices:
+                if j > i and j not in to_delete:
+                    to_delete.add(j)
+
+        if to_delete:
+            del bicrystal[list(to_delete)]
+
+    # Attach annotation metadata
+    bicrystal.info['perturb_annotation'] = {
+        'type': 'grain_boundary',
+        'metadata': {
+            'axis': list(axis),
+            'angle': angle_deg,
+            'mode': 'simple_rotation'
+        }
+    }
+
+    return bicrystal
+
+
+def get_rotation_matrix_local(axis, theta_deg):
+    """Local copy of rotation matrix to avoid circular imports."""
+    axis = np.array(axis, dtype=float)
+    axis /= np.linalg.norm(axis)
+
+    theta = np.radians(theta_deg)
+    c = np.cos(theta)
+    s = np.sin(theta)
+    t = 1 - c
+
+    x, y, z = axis
+
+    return np.array([
+        [t*x*x + c,   t*x*y - z*s, t*x*z + y*s],
+        [t*x*y + z*s, t*y*y + c,   t*y*z - x*s],
+        [t*x*z - y*s, t*y*z + x*s, t*z*z + c]
+    ])
+
