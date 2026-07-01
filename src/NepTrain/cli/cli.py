@@ -66,6 +66,10 @@ def build_perturb(subparsers):
             kwargs['output_file'] = kwargs.pop('out_file_path')
         if 'min_distance' in kwargs:
             kwargs['atom_pert_distance'] = kwargs.pop('min_distance')
+        if 'mag_flip_prob' in kwargs:
+            mag_kwargs = kwargs.get('mag_kwargs') or {}
+            mag_kwargs['flip_prob'] = kwargs.pop('mag_flip_prob')
+            kwargs['mag_kwargs'] = mag_kwargs
             
         # Remove internal argparse arguments
         if 'func' in kwargs:
@@ -839,6 +843,14 @@ def build_select(subparsers):
                                const=0.6,nargs='?',
                                help="Whether to filter based on covalent radius, the default is False. If True, the default coefficient is 0.6, and a coefficient can be passed in",
                                default=False)
+    parser_select.add_argument("--magnetic-select",
+                               action='store_true',
+                               default=False,
+                               help="Augment structural descriptors with spin/moment features before PCA/FPS. Use for magnetic NEP active learning.")
+    parser_select.add_argument("--magnetic-weight",
+                               type=float,
+                               default=1.0,
+                               help="Weight applied to standardized magnetic features when --magnetic-select is enabled.")
 
     dc_group = parser_select.add_mutually_exclusive_group(required=False)
     dc_group.add_argument('-pca',"--pca", action='store_const', const='pca', dest='decomposition',

@@ -14,7 +14,7 @@ from tqdm import tqdm
 from NepTrain import utils
 from ase.io import read as ase_read
 from ase.io import write as ase_write
-from .select import select_structures, filter_by_bonds, farthest_point_sampling
+from .select import select_structures, filter_by_bonds, farthest_point_sampling, augment_descriptors_with_magnetism
 from .filter import adjust_reasonable, parallel_filter_trajectory
 from ..gpumd.plot import plot_md_selected
 
@@ -141,7 +141,15 @@ def run_select(argparse):
     utils.print_msg("Starting to select points, please wait...")
     new_structure_des=np.vstack(trajectory_structure_des)
 
-
+    if getattr(argparse, 'magnetic_select', False):
+        utils.print_msg("Augmenting descriptors with magnetic spin/moment features for magnetic NEP selection.")
+        train_structure_des, new_structure_des = augment_descriptors_with_magnetism(
+            train_structure_des,
+            new_structure_des,
+            base_train,
+            trajectory_structures,
+            weight=getattr(argparse, 'magnetic_weight', 1.0),
+        )
 
     selected_i =farthest_point_sampling(new_structure_des,argparse.max_selected,argparse.min_distance,selected_data=train_structure_des)
 

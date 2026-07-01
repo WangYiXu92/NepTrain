@@ -28,7 +28,15 @@ NepTrain select <trajectory_paths> [options]
   Use PCA for decomposition.
 - `--umap, -umap`
   Use UMAP for decomposition.
-- `-o, --out`  
+- `--magnetic-select`
+  Augment structural descriptors with spin/moment features before farthest-point
+  sampling. Use this for magnetic NEP active learning, because standard
+  NEP/SOAP descriptors only see species, cell, and positions; they cannot
+  distinguish FM, AFM, and non-collinear spin textures on the same structure.
+- `--magnetic-weight`
+  Weight for standardized magnetic features when `--magnetic-select` is enabled.
+  Default: `1.0`.
+- `-o, --out`
   Output file for selected structures. Default: `./selected.xyz`.
 - **SOAP Parameters:**
   - `-r, --r_cut`
@@ -49,4 +57,11 @@ bonds and save the results to `selected.xyz`:
 
 ```bash
 NepTrain select trajectory.xyz -max 100 -f -o selected.xyz
+```
+
+For magnetic NEP active learning, keep the same PCA/FPS workflow but add spin
+features:
+
+```bash
+NepTrain select trajectory.xyz --magnetic-select --magnetic-weight 1.0 -max 100 -o selected.xyz
 ```

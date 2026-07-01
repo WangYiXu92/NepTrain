@@ -68,6 +68,96 @@ def farthest_point_sampling(points, n_samples, min_dist=0.1, selected_data=None)
     return sampled_indices
 
 
+def _get_vector_array(atoms, *names):
+    """Return the first available (N, 3) magnetic vector array from an ASE Atoms."""
+    n_atoms = len(atoms)
+    for name in names:
+        if name in atoms.arrays:
+            arr = np.asarray(atoms.arrays[name], dtype=float)
+            if arr.shape == (n_atoms, 3):
+                return arr
+            if arr.shape == (n_atoms,):
+                out = np.zeros((n_atoms, 3), dtype=float)
+                out[:, 2] = arr
+                return out
+    try:
+        arr = np.asarray(atoms.get_initial_magnetic_moments(), dtype=float)
+    except Exception:
+        arr = np.zeros((n_atoms,), dtype=float)
+    if arr.shape == (n_atoms, 3):
+        return arr
+    if arr.shape == (n_atoms,):
+        out = np.zeros((n_atoms, 3), dtype=float)
+        out[:, 2] = arr
+        return out
+    return np.zeros((n_atoms, 3), dtype=float)
+
+
+def magnetic_structure_features(structures):
+    """Compute compact spin/moment features for magnetic active learning.
+
+    Existing NEP/SOAP structure descriptors only see positions and species. For
+    magnetic NEP, the same structure with FM/AFM/non-collinear spins can have
+    radically different labels. These features add the missing spin-space axes
+    without replacing the existing PCA/FPS workflow.
+    """
+    features = []
+    for atoms in structures:
+        spin = _get_vector_array(atoms, 'spin', 'initial_magmoms')
+        moment = _get_vector_array(atoms, 'moment', 'magmom', 'magmoms')
+        mags = np.linalg.norm(spin, axis=1)
+        safe = np.where(mags > 1e-12, mags, 1.0)
+        dirs = spin / safe[:, None]
+        if len(atoms) > 1:
+            dot = dirs @ dirs.T
+            iu = np.triu_indices(len(atoms), k=1)
+            align = dot[iu]
+            align_mean = float(np.mean(align))
+            align_std = float(np.std(align))
+        else:
+            align_mean = 1.0
+            align_std = 0.0
+        moment_delta = np.linalg.norm(moment - spin, axis=1)
+        features.append([
+            float(np.mean(mags)),
+            float(np.std(mags)),
+            *np.mean(spin, axis=0).tolist(),
+            *np.mean(dirs, axis=0).tolist(),
+            align_mean,
+            align_std,
+            float(np.mean(moment_delta)),
+        ])
+    return np.asarray(features, dtype=float)
+
+
+def augment_descriptors_with_magnetism(train_des, new_des, train_structures, new_structures, weight=1.0):
+    """Z-score structural descriptors and append weighted magnetic features."""
+    train_des = np.asarray(train_des, dtype=float)
+    new_des = np.asarray(new_des, dtype=float)
+    if train_des.size == 0:
+        train_des = np.empty((0, new_des.shape[1] if new_des.ndim == 2 else 0), dtype=float)
+    combined_struct = np.vstack([train_des, new_des]) if train_des.size else new_des.copy()
+    struct_mean = np.mean(combined_struct, axis=0, keepdims=True)
+    struct_std = np.std(combined_struct, axis=0, keepdims=True)
+    struct_std[struct_std < 1e-12] = 1.0
+    train_struct_z = (train_des - struct_mean) / struct_std if len(train_des) else train_des
+    new_struct_z = (new_des - struct_mean) / struct_std
+
+    train_mag = magnetic_structure_features(train_structures) if len(train_structures) else np.empty((0, 11))
+    new_mag = magnetic_structure_features(new_structures)
+    combined_mag = np.vstack([train_mag, new_mag]) if len(train_mag) else new_mag.copy()
+    mag_mean = np.mean(combined_mag, axis=0, keepdims=True)
+    mag_std = np.std(combined_mag, axis=0, keepdims=True)
+    mag_std[mag_std < 1e-12] = 1.0
+    train_mag_z = (train_mag - mag_mean) / mag_std if len(train_mag) else train_mag
+    new_mag_z = (new_mag - mag_mean) / mag_std
+
+    return (
+        np.hstack([train_struct_z, float(weight) * train_mag_z]) if len(train_struct_z) else train_struct_z,
+        np.hstack([new_struct_z, float(weight) * new_mag_z]),
+    )
+
+
 def select_structures(train, new_atoms ,descriptor, max_selected=20, min_distance=0.01 ):
     # 首先去掉跑崩溃的结构
     if descriptor is None:

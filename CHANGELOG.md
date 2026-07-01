@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Magnetic VASP conversion and selection
+
+- Added `NepTrain.core.dft.vasp.magnetic_exyz` to convert VASP calculation directories to GPUMD magnetic extended XYZ with `spin:R:3`, `moment:R:3`, and `torque:R:3`.
+- Added `--magnetic-select` / `--magnetic-weight` to augment PCA/FPS selection with spin and moment features for magnetic NEP active learning.
+- Fixed CLI plumbing so `--mag-flip-prob` reaches `apply_magnetic_perturbation()` as `flip_prob`.
+
 ### Fixed — Magnetic perturbation and VASP magnetic exyz
 
 - Restored `apply_magnetic_perturbation()` compatibility with `mag_config`, `noise`, `rng_values`, and `flip_prob`.

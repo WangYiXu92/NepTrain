@@ -33,6 +33,8 @@ The Vasp calculation allows the use of the `INCAR` file as a template, which ena
   `moment:R:3`, and `torque:R:3`. `spin` records the constrained/input spin
   vector, `moment` records DFT per-atom magnetic moments when available, and
   `torque` is written as DFT torques when available or zero vectors otherwise.
+  Completed VASP directories can also be converted after the fact with:
+  `python -m NepTrain.core.dft.vasp.magnetic_exyz <root> --recursive -o train.xyz`.
 - `--mag-relax`
   Allow magnetic moment direction/size relaxation (disables `I_CONSTRAINED_M=1`). Use this if you want the magnetic moments to relax to the ground state.
 - `-kspacing`  
