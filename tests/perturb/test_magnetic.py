@@ -80,6 +80,17 @@ class TestMagnetic(unittest.TestCase):
             moms = np.linalg.norm(moms, axis=1)
         np.testing.assert_array_equal(moms, [0.0, 0.0])
 
+    def test_non_collinear_overwrites_existing_scalar_moments(self):
+        """ASE can pre-create scalar initial_magmoms; vector perturbation must replace it."""
+        atoms = self.atoms.copy()
+        atoms.set_initial_magnetic_moments([2.0, -2.0])
+
+        out = apply_magnetic_perturbation(atoms, mode='non_collinear', mag_config=self.mag_config, seed=1)
+        moms = out.get_initial_magnetic_moments()
+
+        self.assertEqual(moms.shape, (2, 3))
+        np.testing.assert_allclose(np.linalg.norm(moms, axis=1), [2.0, 2.0])
+
     def test_vector_mag_config_is_preserved_by_ensure(self):
         """Vector config values should initialize non-collinear moments directly."""
         from NepTrain.core.perturb.magnetic import ensure_magnetic_configuration

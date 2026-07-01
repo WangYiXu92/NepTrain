@@ -1516,6 +1516,9 @@ def apply_magnetic_perturbation(
 
     if not np.isfinite(mag_moments).all():
         raise ValueError("Generated magnetic moments contain NaN or Inf")
+    # Clear any existing scalar (N,) initial_magmoms before setting (N,3) vectors
+    if 'initial_magmoms' in structure.arrays:
+        del structure.arrays['initial_magmoms']
     structure.set_initial_magnetic_moments(mag_moments)
     structure.info['perturb_annotation'] = {
         'type': 'magnetic',
@@ -1561,6 +1564,8 @@ def ensure_magnetic_configuration(
                 else:
                     mag_moments[i, 2] = float(parsed)
 
+    if 'initial_magmoms' in atoms.arrays:
+        del atoms.arrays['initial_magmoms']
     atoms.set_initial_magnetic_moments(mag_moments)
     return atoms
 
