@@ -1,0 +1,42 @@
+# GPUMD nep.in template for magnetic NEP training (model_type=4)
+# BCC Fe — 200 structures (120 collinear + 80 non-collinear)
+# Adjust values as needed for your specific training run.
+#
+# Usage:
+#   1. Place train.xyz (from batch_outcar_to_exyz.py) in this directory
+#   2. Optionally place test.xyz (holdout set) alongside
+#   3. Run: /path/to/gpumd/src/nep train.xyz [test.xyz]
+#   4. Output: nep.txt (trained model), *.out files (RMSE tracking)
+
+# --- System definition ---
+type          1 Fe
+model_type    4
+
+# --- Radial/angular basis ---
+cutoff        4.0 4.0
+n_max         4 4
+basis_size    8 8
+l_max         4
+
+# --- Neural network ---
+neuron        30
+
+# --- Loss weights ---
+lambda_e      1.0
+lambda_f      1.0
+lambda_v      0.1
+lambda_torque 1.0
+# lambda_moment is auto-derived from moment:R:3 in train.xyz; not a nep.in keyword
+
+# --- Optimizer (SNES) ---
+population    50
+generation    100000
+
+# --- Training/test split ---
+batch         2000
+# If no separate test.xyz, GPUMD auto-splits train.xyz
+
+# --- Physical regularization ---
+# BCC Fe elastic constants (GPa): C11=243, C12=146, C44=116
+# Bulk modulus B = (C11+2*C12)/3 ≈ 178 GPa
+# Shear modulus G = C44 ≈ 116 GPa
