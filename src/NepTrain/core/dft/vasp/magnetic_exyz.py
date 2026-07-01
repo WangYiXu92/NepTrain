@@ -129,6 +129,43 @@ def _parse_magnetization_component(lines: Sequence[str], component: str, n_atoms
     return np.asarray(data, dtype=float)
 
 
+def parse_outcar_magforces(path: Path, n_atoms: int) -> Optional[np.ndarray]:
+    """Parse magnetic forces (torque labels) from OUTCAR.
+
+    When ``I_CONSTRAINED_M=1`` (or 2), VASP writes a ``magnetic forces in``
+    block analogous to ``TOTAL-FORCE``. Each row has 6 floats: the first 3 are
+    the atomic position (echo), the last 3 are the magnetic forces
+    ``-dE/dS_alpha`` (alpha = constraint components). For
+    ``I_CONSTRAINED_M=1`` only the transverse components are nonzero; the
+    parallel component is constrained and reported as the constraint lambda.
+
+    These magnetic forces ARE the GPUMD torque labels: ``τ = S × H_eff`` where
+    ``H_eff = -dE/dS``, so the raw ``-dE/dS`` from VASP is ``-H_eff`` and GPUMD
+    can use it directly as torque (the cross product with S is handled inside
+    GPUMD's training kernel).
+    """
+    lines = path.read_text(errors="ignore").splitlines()
+    # VASP 6.x writes "magnetic forces in" (eV) block
+    starts = [i for i, line in enumerate(lines) if "magnetic forces in" in line.lower()]
+    if not starts:
+        return None
+    start = starts[-1]
+
+    data: List[List[float]] = []
+    for line in lines[start + 2:]:  # skip header + separator
+        vals = _floats(line)
+        if len(vals) >= 6 and len(data) < n_atoms:
+            data.append(vals[3:6])
+        elif data and len(data) >= n_atoms:
+            break
+    if len(data) != n_atoms:
+        return None
+    arr = np.asarray(data, dtype=float)
+    if arr.shape != (n_atoms, 3):
+        return None
+    return arr
+
+
 def parse_outcar_moments(path: Path, n_atoms: int, fallback_spin: np.ndarray) -> np.ndarray:
     """Parse per-atom magnetic moment vectors from OUTCAR.
 
@@ -202,7 +239,8 @@ def convert_vasp_dir(calc_dir: Path, handle) -> None:
     energy = parse_outcar_energy(outcar)
     forces = parse_outcar_forces(outcar, n_atoms)
     moment = parse_outcar_moments(outcar, n_atoms, fallback_spin=spin)
-    write_magnetic_exyz_frame(handle, atoms, energy, forces, spin, moment)
+    torque = parse_outcar_magforces(outcar, n_atoms)
+    write_magnetic_exyz_frame(handle, atoms, energy, forces, spin, moment, torque=torque)
 
 
 def discover_calculation_dirs(paths: Iterable[Path], recursive: bool = False) -> List[Path]:

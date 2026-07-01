@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added — Magnetic VASP conversion and selection
 
 - Added `NepTrain.core.dft.vasp.magnetic_exyz` to convert VASP calculation directories to GPUMD magnetic extended XYZ with `spin:R:3`, `moment:R:3`, and `torque:R:3`.
+- Added `parse_outcar_magforces()` to extract torque labels from OUTCAR `magnetic forces` blocks when `I_CONSTRAINED_M=1/2` is used. Torque is no longer zero-filled for constrained-moment VASP calculations.
 - Added `--magnetic-select` / `--magnetic-weight` to augment PCA/FPS selection with spin and moment features for magnetic NEP active learning.
 - Fixed CLI plumbing so `--mag-flip-prob` reaches `apply_magnetic_perturbation()` as `flip_prob`.
 
