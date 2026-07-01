@@ -1070,5 +1070,59 @@ def generate_grain_boundary_csl(element, sigma, axis, angle, plane=[0, 0, 1], si
     return bicrystal
 
 
-# 别名：保持与旧代码的兼容性
-generate_grain_boundary = generate_grain_boundary_csl
+def generate_grain_boundary(atoms_or_element, sigma=None, axis=None, angle=None,
+                            angle_deg=None, min_dist=None, vacuum=0.0,
+                            delete_overlap=True, translation=None,
+                            translation_frac=None, tol=1.5, **kwargs):
+    """Backward-compatible grain boundary generator.
+
+    Accepts both the old API (Atoms first arg + angle_deg/min_dist kwargs)
+    and the new API (element string + sigma/axis/angle).
+
+    When an Atoms object is passed as first arg, infers element and creates GB.
+    Maps ``angle_deg`` → ``angle``, ``min_dist`` → ``tol``.
+    """
+    # Normalize angle
+    if angle is None and angle_deg is not None:
+        angle = angle_deg
+    if angle is None:
+        angle = 36.87  # default Sigma 5 [001]
+    if axis is None:
+        axis = [0, 0, 1]
+    if sigma is None:
+        sigma = 5
+
+    # Map min_dist → tol
+    if min_dist is not None:
+        tol = min_dist
+
+    # If first arg is an Atoms object, extract element
+    if isinstance(atoms_or_element, Atoms):
+        symbols = set(atoms_or_element.get_chemical_symbols())
+        if len(symbols) == 1:
+            element = symbols.pop()
+        else:
+            element = atoms_or_element.get_chemical_symbols()[0]
+
+        result = generate_grain_boundary_csl(element, sigma=sigma, axis=axis,
+                                              angle=angle, vacuum=vacuum,
+                                              delete_overlap=delete_overlap, tol=tol)
+
+        # Apply translation if specified
+        if translation_frac is not None and result is not None:
+            tx, ty = translation_frac[0], translation_frac[1]
+            pos = result.get_positions()
+            cell = result.get_cell()
+            # Translate upper half of atoms
+            mid_z = (pos[:, 2].max() + pos[:, 2].min()) / 2
+            upper = pos[:, 2] > mid_z
+            pos[upper, 0] += tx * cell[0, 0]
+            pos[upper, 1] += ty * cell[1, 1]
+            result.set_positions(pos)
+        return result
+    else:
+        # element string — original API
+        return generate_grain_boundary_csl(atoms_or_element, sigma=sigma,
+                                            axis=axis, angle=angle,
+                                            vacuum=vacuum,
+                                            delete_overlap=delete_overlap, tol=tol)

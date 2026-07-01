@@ -178,3 +178,111 @@ def find_csl_basis(sigma, axis, angle_deg, limit=5, tolerance=1e-3):
     
     best = candidates[0]
     return best['M'], best['M_prime']
+
+
+def generate_integer_axes(max_index=3):
+    """Generate all unique integer rotation axes up to ``max_index``.
+    
+    Returns a list of [u, v, w] lists, sorted by ascending norm,
+    with primitive direction only (no integer multiples of a shorter axis).
+    """
+    axes = []
+    seen = set()
+    for u in range(0, max_index + 1):
+        for v in range(0, max_index + 1):
+            for w in range(0, max_index + 1):
+                if u == 0 and v == 0 and w == 0:
+                    continue
+                # GCD reduction to get primitive direction
+                from math import gcd
+                g = gcd(gcd(abs(u), abs(v)), abs(w))
+                pu, pv, pw = u // g, v // g, w // g
+                key = (pu, pv, pw)
+                if key in seen:
+                    continue
+                seen.add(key)
+                axes.append([pu, pv, pw])
+    axes.sort(key=lambda a: (a[0]**2 + a[1]**2 + a[2]**2, a))
+    return axes
+
+
+# Known CSL data for cubic systems: axis → list of (sigma, angle_deg)
+_CSL_TABLE = {
+    (0, 0, 1): [(5, 36.87), (13, 22.62), (17, 28.07), (25, 16.26), (29, 12.76)],
+    (0, 1, 1): [(3, 70.53), (9, 19.47), (11, 50.48), (17, 86.63), (19, 26.53)],
+    (1, 1, 1): [(3, 60.00), (7, 38.21), (13, 27.80), (19, 46.83), (21, 21.79)],
+    (1, 1, 0): [(3, 70.53), (9, 38.94), (11, 50.48), (17, 86.63), (19, 26.53)],
+    (1, 0, 0): [(5, 36.87), (13, 22.62), (17, 28.07), (25, 16.26)],
+}
+
+
+def _normalize_axis(axis):
+    """Reduce axis to its primitive integer form."""
+    axis = [int(round(x)) for x in axis]
+    from math import gcd
+    g = gcd(gcd(abs(axis[0]), abs(axis[1])), abs(axis[2]))
+    if g == 0:
+        return (0, 0, 1)
+    return (axis[0]//g, axis[1]//g, axis[2]//g)
+
+
+def get_csl_data(axis, max_sigma=100):
+    """Return list of CSL (sigma, angle) dicts for a given rotation axis.
+    
+    Falls back to computing from ``find_csl_basis`` for axes not in the table.
+    """
+    key = _normalize_axis(axis)
+    data = []
+    
+    if key in _CSL_TABLE:
+        for sigma, angle in _CSL_TABLE[key]:
+            if sigma <= max_sigma:
+                data.append({'sigma': sigma, 'angle': angle})
+    else:
+        # Try known sigma values and check if CSL basis exists
+        for sigma in [3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 25, 27, 29, 31]:
+            if sigma > max_sigma:
+                break
+            # Compute angle from sigma for this axis
+            angle = get_csl_angle(list(key), sigma)
+            if angle is not None:
+                data.append({'sigma': sigma, 'angle': angle})
+    
+    if not data:
+        # Default fallback
+        data.append({'sigma': 5, 'angle': 36.87})
+    
+    return data
+
+
+def get_csl_angle(axis, sigma=None):
+    """Compute the CSL rotation angle for a given axis (and optionally sigma).
+    
+    For cubic systems, the rotation angle satisfies:
+        tan(θ/2) = n * sqrt(Σ) / (m * Σ)
+    For simple axes, use known values. Otherwise compute numerically.
+    """
+    key = _normalize_axis(axis)
+    
+    if sigma is None:
+        data = get_csl_data(axis)
+        if data:
+            return data[0]['angle']
+        return None
+    
+    # Look up in table
+    if key in _CSL_TABLE:
+        for s, a in _CSL_TABLE[key]:
+            if s == sigma:
+                return a
+    
+    # Numerical: try to find an angle where find_csl_basis succeeds
+    for angle in np.linspace(10, 90, 81):
+        try:
+            M, Mp = find_csl_basis(sigma, list(key), angle, limit=5)
+            if M is not None and abs(abs(np.linalg.det(M)) - sigma) < 0.5:
+                return round(angle, 2)
+        except (ValueError, TypeError):
+            continue
+    
+    return None

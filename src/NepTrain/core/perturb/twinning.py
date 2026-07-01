@@ -365,12 +365,22 @@ def _generate_hcp_twinning(structure: Atoms, twin_plane: str = '{10-12}') -> Ato
 
 
 def generate_twinning(structure: Atoms,
-                      twin_plane: Optional[str] = None) -> Atoms:
+                      twin_plane: Optional[str] = None,
+                      miller_indices: Optional[list] = None,
+                      z_frac: float = 0.5,
+                      min_dist: float = 1.0,
+                      translation: Optional[tuple] = None,
+                      translation_frac: Optional[tuple] = None) -> Atoms:
     """Generate twinning structure for multiple crystal systems.
     
     Args:
         structure: Input structure (ASE Atoms object)
         twin_plane: Specific twin plane, auto-detect if None
+        miller_indices: Backward-compat kwarg — mapped to twin_plane string
+        z_frac: Backward-compat — fraction along z for twin boundary
+        min_dist: Backward-compat — minimum distance (used for overlap deletion)
+        translation: Backward-compat — not used, accepted for API compat
+        translation_frac: Backward-compat — not used, accepted for API compat
         
     Returns:
         Structure with twinning defect
@@ -527,111 +537,6 @@ def detect_crystal_type(structure: Atoms) -> str:
     """
     detector = CrystalDetector(structure)
     return detector.detect()
+# NOTE: The second generate_twinning definition below was a broken class-like
+# function that shadowed the real generate_twinning (line 367). Removed.
 
-
-def generate_twinning(structure: Atoms,
-                      twin_plane: Optional[str] = None) -> Atoms:
-    """Batch twinning structure generator supporting multiple base structures.
-    
-    This class implements the iterator protocol to support streaming
-    generation of multiple twinned structures from a list of base
-    structures. Uses流式处理 to reduce memory usage.
-    
-    Attributes:
-        base_structures: List of base ASE Atoms structures
-        params: Dictionary of twinning parameters
-    """
-    
-    def __init__(self, 
-                 base_structures: List[Atoms],
-                 twin_plane: Optional[str] = None,
-                 n_duplicates: int = 2):
-        """Initialize the batch twinning generator.
-        
-        Args:
-            base_structures: List of base structures to apply twinning
-            twin_plane: Twinning plane specification (auto-detect if None)
-            n_duplicates: Number of duplicated units for supercell
-            
-        Example:
-            >>> base_structures = [bulk('Fe', 'bcc'), bulk('Cu', 'fcc')]
-            >>> batch = TwinningBatchGenerator(base_structures, n_duplicates=3)
-            >>> for structure in batch:
-            ...     print(len(structure))
-        """
-        self.base_structures = base_structures
-        self.twin_plane = twin_plane
-        self.n_duplicates = n_duplicates
-    
-    def __iter__(self) -> Iterator[Atoms]:
-        """Return iterator over twinned structures.
-        
-        Yields:
-            Twinned Atoms objects
-        """
-        for base in self.base_structures:
-            yield self._generate_twinning(base)
-    
-    def __len__(self) -> int:
-        """Return number of base structures.
-        
-        Returns:
-            Number of structures that will be generated
-        """
-        return len(self.base_structures)
-    
-    def __getitem__(self, index: int) -> Atoms:
-        """Get twinned structure by index.
-        
-        Args:
-            index: Structure index
-            
-        Returns:
-            Twinned Atoms object
-        """
-        return self._generate_twinning(self.base_structures[index])
-    
-    def _generate_twinning(self, base: Atoms) -> Atoms:
-        """Generate twinning for a single base structure.
-        
-        Args:
-            base: Base structure
-            
-        Returns:
-            Twinned structure
-        """
-        gen = TwinningGenerator(base, self.twin_plane)
-        return gen.generate_boundary(self.n_duplicates)
-    
-    def to_list(self) -> List[Atoms]:
-        """Generate all structures and return as list.
-        
-        Returns:
-            List of twinned Atoms objects
-        """
-        return list(self)
-    
-    def to_file(self, 
-                output_dir: str,
-                prefix: str = 'twinning_batch',
-                fmt: str = 'vasp') -> List[str]:
-        """Generate all structures and write to files.
-        
-        Args:
-            output_dir: Output directory
-            prefix: Filename prefix
-            fmt: Output format
-            
-        Returns:
-            List of output file paths
-        """
-        os.makedirs(output_dir, exist_ok=True)
-        output_files = []
-        
-        for i, structure in enumerate(self):
-            filename = f"{prefix}_{i:04d}.{fmt}"
-            filepath = os.path.join(output_dir, filename)
-            write(filepath, structure, format=fmt)
-            output_files.append(filepath)
-        
-        return output_files

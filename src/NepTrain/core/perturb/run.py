@@ -27,7 +27,7 @@ from .antisite import generate_antisite_defects
 from .shuffle import shuffle_element_positions, _parse_element_range, _filter_fixed_indices
 from .surface import generate_surface
 from .grain_boundary import generate_grain_boundary
-# from .csl_core import get_csl_data, generate_integer_axes
+from .csl_core import get_csl_data, generate_integer_axes, get_csl_angle
 from .dislocation import generate_dislocation
 from .twinning import generate_twinning
 from .stacking_fault import generate_stacking_fault
