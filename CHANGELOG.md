@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Magnetic data validation and VASP readiness checks
+
+- Added `NepTrain validate-magnetic <train.xyz>` to check that magnetic extxyz files have valid `(N,3)` vector arrays for `spin`, `moment`, and `torque`, with per-frame missing-array counts, NaN/Inf flags, scalar-vs-vector detection, zero-torque warnings, and spin-norm statistics.
+- Added `NepTrain check-magnetic-input <calc_dir>` to verify INCAR files have `LNONCOLLINEAR`, `I_CONSTRAINED_M`, `M_CON`, and `MAGMOM` correctly configured for non-collinear constrained-moment VASP needed for GPUMD `model_type=4` torque labels.
+- New module: `src/NepTrain/core/validation/` with `magnetic.py` and `vasp_magnetic.py`.
+- Added 16 targeted tests (`tests/validation/test_magnetic_validator.py`, `tests/validation/test_vasp_magnetic_readiness.py`).
+
 ### Added — Workflow artifact reporting
 
 - Added `NepTrain.core.train.artifacts` for workflow-stage JSON reports under `workflow_reports/Generation-*/<stage>.json`.

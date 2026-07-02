@@ -10,6 +10,8 @@ from NepTrain.core import *
 from NepTrain.core.predict import run_predict
 from NepTrain.core.gpumd.thermo import run_thermo
 from NepTrain.core.train.status import run_status
+from NepTrain.core.validation.magnetic import validate_magnetic_xyz
+from NepTrain.core.validation.vasp_magnetic import check_magnetic_readiness
 from NepTrain.core.nep.run import plot_nep_result_cli
 from NepTrain import __version__
 import warnings
@@ -632,6 +634,66 @@ def build_status(subparsers):
                                help="Path to the training work directory (default: ./cache).")
 
 
+def run_validate_magnetic(args):
+    """CLI entry: validate magnetic extxyz training data."""
+    report = validate_magnetic_xyz(args.train_xyz)
+    if not report["exists"]:
+        print(f"ERROR: {args.train_xyz} does not exist")
+        return 1
+    print(f"File     : {report['path']}")
+    print(f"Frames   : {report['n_frames']}")
+    print(f"Arrays OK: {'YES' if report['spin_shape_ok'] else 'NO'} (all (N,3) vectors)")
+    print(f"Torque   : {'non-zero' if report['torque_nonzero'] else 'ZERO — zero-torque dataset'}")
+    for name, count in sorted(report.get("missing_arrays", {}).items()):
+        print(f"MISSING  : {name} in {count} frame(s)")
+    for name in report.get("nan_inf_arrays", []):
+        print(f"NaN/Inf  : {name}")
+    for w in report.get("warnings", []):
+        print(f"WARNING  : {w}")
+    if report["valid"]:
+        print("\nPASS: all frames have valid (N,3) spin/moment/torque arrays")
+    else:
+        print("\nFAIL: fix the issues above before using this data for GPUMD magnetic NEP")
+    return 0 if report["valid"] else 1
+
+
+def build_validate_magnetic(subparsers):
+    parser = subparsers.add_parser(
+        "validate-magnetic",
+        help="Validate magnetic extxyz for GPUMD model_type=4 training.",
+    )
+    parser.set_defaults(func=run_validate_magnetic)
+    parser.add_argument("train_xyz", type=str, help="Path to magnetic extxyz file")
+
+
+def run_check_magnetic_input(args):
+    """CLI entry: check VASP INCAR for constrained non-collinear readiness."""
+    report = check_magnetic_readiness(args.calc_dir)
+    print(f"Directory    : {report['directory']}")
+    print(f"Non-collinear: {'YES' if report['noncollinear'] else 'NO (LNONCOLLINEAR required)'}")
+    print(f"Constrained  : {'YES' if report['constrained_m'] else 'NO (I_CONSTRAINED_M required)'}")
+    print(f"M_CON present: {'YES' if report['m_con_present'] else 'NO'}")
+    print(f"MAGMOM values: {report['magmom_count']} ({'vector 3N' if report['magmom_vector'] else 'scalar N — still accepted'})")
+    for p in sorted(report.get("missing_params", [])):
+        print(f"MISSING  : {p}")
+    for w in report.get("warnings", []):
+        print(f"WARNING  : {w}")
+    if report["ready"]:
+        print("\nREADY: INCAR is correctly configured for non-collinear constrained-moment VASP")
+    else:
+        print("\nNOT READY: add the missing parameters listed above")
+    return 0 if report["ready"] else 1
+
+
+def build_check_magnetic_input(subparsers):
+    parser = subparsers.add_parser(
+        "check-magnetic-input",
+        help="Check VASP INCAR for non-collinear constrained-moment readiness.",
+    )
+    parser.set_defaults(func=run_check_magnetic_input)
+    parser.add_argument("calc_dir", type=str, help="Path to VASP calculation directory with INCAR")
+
+
 def build_nep(subparsers):
     parser_nep = subparsers.add_parser(
         "nep",
@@ -908,6 +970,8 @@ def main():
     build_predict(subparsers)
     build_thermo(subparsers)
     build_status(subparsers)
+    build_validate_magnetic(subparsers)
+    build_check_magnetic_input(subparsers)
 
 
 
