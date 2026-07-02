@@ -22,6 +22,18 @@ written to the working directory. A `restart.yaml` file is created after
 each iteration, allowing you to resume the workflow with
 `NepTrain train restart.yaml`.
 
+NepTrain also writes non-fatal workflow audit reports to:
+
+```text
+<work_path>/workflow_reports/Generation-<N>/<stage>.json
+```
+
+Each report records the stage (`nep`, `gpumd`, `select`, `dft`, or `pred`),
+status, artifact paths, file sizes, extxyz frame counts, and missing required
+arrays/results when relevant. `NepTrain status <work_path>` summarizes these
+reports together with the current generation and latest NEP loss, so interrupted
+runs can be audited without guessing from file existence alone.
+
 ## Example
 
 ### Initialization

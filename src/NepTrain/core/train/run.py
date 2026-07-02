@@ -19,6 +19,7 @@ from ruamel.yaml import YAML
 
 from NepTrain import utils
 from NepTrain.core.perturb.vacancy import _filter_vacancies_for_export
+from NepTrain.core.train.artifacts import write_stage_report
 
 from ..utils import check_env
 
@@ -141,6 +142,26 @@ class NepTrainWorker:
     @generation.setter
     def generation(self,value):
         self.config["generation"] = value
+
+    def report_stage(self, stage, status, artifacts=None, required_arrays=None, summary=None, errors=None):
+        """Write a non-fatal workflow report for the current generation/stage."""
+        try:
+            report = write_stage_report(
+                self.config.get("work_path", "./cache"),
+                generation=self.generation,
+                stage=stage,
+                status=status,
+                artifacts=artifacts or {},
+                required_arrays=required_arrays or {},
+                summary=summary or {},
+                errors=errors or [],
+            )
+            if not report.get("valid_artifacts", True):
+                utils.print_warning(f"Workflow report for {stage} contains invalid artifacts; run `NepTrain status {self.config.get('work_path', './cache')}` for details.")
+            return report
+        except Exception as exc:
+            utils.print_warning(f"Failed to write workflow report for {stage}: {exc}")
+            return None
 
 
 
@@ -415,6 +436,12 @@ class NepTrainWorker:
 
         if utils.is_file_empty(self.select_trajectorys_xyz_file):
             utils.print_warning(f"No trajectory file, skip sampling")
+            self.report_stage(
+                "select",
+                "skipped",
+                artifacts={"trajectorys": self.select_trajectorys_xyz_file},
+                summary={"reason": "empty trajectory"},
+            )
 
             return
 
@@ -443,6 +470,16 @@ class NepTrainWorker:
 
             )
 
+        )
+        self.report_stage(
+            "select",
+            "completed",
+            artifacts={
+                "trajectorys": self.select_trajectorys_xyz_file,
+                "selected": self.select_selected_xyz_file,
+                "plot": self.select_selected_png_file,
+            },
+            summary={"max_selected": self.config["select"].get("max_selected")},
         )
 
 
@@ -539,9 +576,20 @@ class NepTrainWorker:
             utils.cat(self.dft_learn_add_xyz_file,
                       self.all_learn_calculated_xyz_file
                       )
+        self.report_stage(
+            "dft",
+            "completed" if not utils.is_file_empty(self.all_learn_calculated_xyz_file) else "skipped",
+            artifacts={
+                "learn_add": self.dft_learn_add_xyz_file,
+                "learn_calculated": self.all_learn_calculated_xyz_file,
+            },
+            required_arrays={"learn_calculated": ("forces",)},
+            summary={"dft_job": self.config.get("dft_job"), "software": self.config.get("dft", {}).get("software")},
+        )
 
     def sub_nep(self):
         utils.print_msg("--" * 4, f"Starting to train the potential function for the {self.generation}th generation.", "--" * 4)
+
 
         if not utils.is_file_empty(self.last_all_learn_calculated_xyz_file):
 
@@ -582,16 +630,38 @@ class NepTrainWorker:
                 )
 
             )
+            self.report_stage(
+                "nep",
+                "completed",
+                artifacts={
+                    "train": self.nep_train_xyz_file,
+                    "nep_txt": self.nep_nep_txt_file,
+                    "restart": self.nep_nep_restart_file,
+                },
+                summary={"restart_enabled": self.config["nep"].get("nep_restart")},
+            )
 
         else:
             utils.print_warning("The dataset has not changed, directly copying the potential function from the last time!")
 
             utils.copy_files(self.last_nep_path, self.nep_path)
+            self.report_stage(
+                "nep",
+                "skipped",
+                artifacts={"nep_txt": self.nep_nep_txt_file},
+                summary={"reason": "dataset unchanged"},
+            )
 
     def sub_nep_pred(self):
 
         if utils.is_file_empty(self.nep_nep_txt_file):
             utils.print_msg(f"No potential function available, skipping prediction.")
+            self.report_stage(
+                "pred",
+                "skipped",
+                artifacts={"nep_txt": self.nep_nep_txt_file},
+                summary={"reason": "missing nep.txt"},
+            )
             return
         if not utils.is_file_empty(self.all_learn_calculated_xyz_file):
             utils.print_msg(f"Starting to predict new dataset.")
@@ -613,8 +683,23 @@ class NepTrainWorker:
                     backward_common_files=[],
                 ),
             )
+            self.report_stage(
+                "pred",
+                "completed",
+                artifacts={
+                    "train": self.pred_train_xyz_file,
+                    "nep_txt": self.pred_nep_txt_file,
+                    "nep_in": self.pred_nep_in_file,
+                },
+            )
         else:
             utils.print_msg(f"The dataset has not changed, skipping prediction.")
+            self.report_stage(
+                "pred",
+                "skipped",
+                artifacts={"learn_calculated": self.all_learn_calculated_xyz_file},
+                summary={"reason": "dataset unchanged"},
+            )
 
 
     def sub_gpumd(self):
@@ -678,6 +763,21 @@ class NepTrainWorker:
                     )
         if tasks:
             asyncio.run(_await_tasks(tasks))
+        trajectory_artifacts = {}
+        for path in sorted(Path(self.gpumd_path).glob("trajectory_*.xyz")):
+            trajectory_artifacts[path.stem] = path
+        step_times = self.config["gpumd"].get("step_times", [])
+        time_ps = step_times[self.generation - 1] if 1 <= self.generation <= len(step_times) else None
+        self.report_stage(
+            "gpumd",
+            "completed" if trajectory_artifacts else "skipped",
+            artifacts=trajectory_artifacts,
+            summary={
+                "n_tasks": len(tasks),
+                "split_by": self.config.get("gpumd_split_job", "temperature"),
+                "time_ps": time_ps,
+            },
+        )
 
         # utils.cat(self.__getattr__(f"gpumd_trajectory_*_xyz_file"),
         #           self.select_trajectorys_xyz_file
@@ -686,6 +786,7 @@ class NepTrainWorker:
 
     def start(self,config_path):
         utils.print_msg("Welcome to NepTrain automatic training!")
+
 
         self.read_config(config_path)
         self.check_env()

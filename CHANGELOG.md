@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Workflow artifact reporting
+
+- Added `NepTrain.core.train.artifacts` for workflow-stage JSON reports under `workflow_reports/Generation-*/<stage>.json`.
+- `NepTrainWorker` now records non-fatal artifact validation reports for `nep`, `gpumd`, `select`, `dft`, and `pred` stages.
+- `NepTrain status` now displays latest stage report status and summary fields, making interrupted workflows easier to audit.
+- Added extxyz artifact validation for frame counts and required arrays/results such as DFT forces.
+
 ### Added — Magnetic VASP conversion and selection
 
 - Added `NepTrain.core.dft.vasp.magnetic_exyz` to convert VASP calculation directories to GPUMD magnetic extended XYZ with `spin:R:3`, `moment:R:3`, and `torque:R:3`.

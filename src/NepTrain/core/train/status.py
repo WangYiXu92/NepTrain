@@ -9,6 +9,7 @@ import glob
 import numpy as np
 from ruamel.yaml import YAML
 from NepTrain import utils
+from .artifacts import load_stage_reports
 
 
 def _read_restart_yaml(work_path):
@@ -111,6 +112,8 @@ def check_status(work_path):
     loss_path = _find_loss_out(work_path, generation)
     loss_info = _read_nep_loss(loss_path) if loss_path else None
 
+    stage_reports = load_stage_reports(work_path, generation=generation)
+
     # Build status
     status = {
         "work_path": work_path,
@@ -121,6 +124,7 @@ def check_status(work_path):
         "is_restart": is_restart,
         "loss": loss_info,
         "loss_path": loss_path,
+        "stage_reports": stage_reports,
     }
 
     _print_status(status)
@@ -155,6 +159,19 @@ def _print_status(status):
             print(f"  Force RMSE(test) : {loss['rmse_force_test']:.3f} meV/A")
     else:
         print(f"\n  (No loss.out found yet)")
+
+    stage_reports = status.get("stage_reports") or {}
+    if stage_reports:
+        print(f"\n  --- Workflow Stage Reports ---")
+        for stage, report in sorted(stage_reports.items()):
+            status_text = report.get("status", "unknown")
+            valid = "valid" if report.get("valid_artifacts", False) else "check"
+            summary = report.get("summary") or {}
+            if not isinstance(summary, dict):
+                summary = {"value": summary}
+            summary_text = ", ".join(f"{k}={v}" for k, v in summary.items())
+            suffix = f" ({summary_text})" if summary_text else ""
+            print(f"  {stage:<8}: {status_text:<10} artifacts={valid}{suffix}")
 
     print(f"{'=' * 50}\n")
 
