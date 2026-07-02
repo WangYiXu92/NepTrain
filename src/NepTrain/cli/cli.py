@@ -12,6 +12,7 @@ from NepTrain.core.gpumd.thermo import run_thermo
 from NepTrain.core.train.status import run_status
 from NepTrain.core.validation.magnetic import validate_magnetic_xyz
 from NepTrain.core.validation.vasp_magnetic import check_magnetic_readiness
+from NepTrain.core.validation.coverage import magnetic_coverage_report
 from NepTrain.core.nep.run import plot_nep_result_cli
 from NepTrain import __version__
 import warnings
@@ -694,6 +695,41 @@ def build_check_magnetic_input(subparsers):
     parser.add_argument("calc_dir", type=str, help="Path to VASP calculation directory with INCAR")
 
 
+def run_magnetic_coverage(args):
+    """CLI entry: spin texture coverage report."""
+    report = magnetic_coverage_report(args.new_xyz, base=args.base, output_json=args.output)
+    print(f"New frames      : {report['n_new']} ({report['new'].get('n_magnetic', 0)} magnetic)")
+    if report.get("n_base"):
+        print(f"Base frames     : {report['n_base']} ({report['base'].get('n_magnetic', 0)} magnetic)")
+    stats = report["new"]
+    print(f"FM ratio        : {stats.get('fm_ratio', 'N/A'):.2f}" if isinstance(stats.get('fm_ratio'), float) else f"FM ratio        : {stats.get('fm_ratio', 'N/A')}")
+    print(f"AFM ratio       : {stats.get('afm_ratio', 'N/A'):.2f}" if isinstance(stats.get('afm_ratio'), float) else f"AFM ratio       : {stats.get('afm_ratio', 'N/A')}")
+    print(f"Non-collinear   : {stats.get('noncollinear_ratio', 'N/A'):.2f}" if isinstance(stats.get('noncollinear_ratio'), float) else f"Non-collinear   : {stats.get('noncollinear_ratio', 'N/A')}")
+    print(f"Spin|mean±std|  : {stats.get('spin_magnitude_mean', 0):.2f} ± {stats.get('spin_magnitude_std', 0):.2f} μB")
+    print(f"Pairwise align  : {stats.get('mean_pairwise_alignment', 0):.3f}")
+    comp = report.get("comparison", {})
+    if comp:
+        print(f"\n--- vs base ---")
+        print(f"Δ FM            : {comp.get('fm_ratio_diff', 0):+.2f}")
+        print(f"Δ AFM           : {comp.get('afm_ratio_diff', 0):+.2f}")
+        print(f"Δ NCL           : {comp.get('ncl_ratio_diff', 0):+.2f}")
+        print(f"Assessment      : {comp.get('coverage_assessment', 'N/A')}")
+    if args.output:
+        print(f"\nReport saved to: {args.output}")
+    return 0
+
+
+def build_magnetic_coverage(subparsers):
+    parser = subparsers.add_parser(
+        "magnetic-coverage",
+        help="Report spin texture coverage of new structures vs training set.",
+    )
+    parser.set_defaults(func=run_magnetic_coverage)
+    parser.add_argument("new_xyz", type=str, help="Path to new/selected extxyz")
+    parser.add_argument("--base", type=str, default=None, help="Optional base training set extxyz")
+    parser.add_argument("-o", "--output", type=str, default=None, help="Write JSON report to path")
+
+
 def build_nep(subparsers):
     parser_nep = subparsers.add_parser(
         "nep",
@@ -972,6 +1008,7 @@ def main():
     build_status(subparsers)
     build_validate_magnetic(subparsers)
     build_check_magnetic_input(subparsers)
+    build_magnetic_coverage(subparsers)
 
 
 
