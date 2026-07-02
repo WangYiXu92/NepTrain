@@ -199,13 +199,19 @@ def write_magnetic_exyz_frame(handle, atoms, energy: float, forces: np.ndarray, 
     cell = atoms.get_cell().array
     pos = atoms.get_positions()
     symbols = atoms.get_chemical_symbols()
+    # Collect provenance/extra info fields (skip ASE-internal keys)
+    extra_info = " ".join(
+        f"{k}={v}" for k, v in sorted(atoms.info.items())
+        if not k.startswith("_") and k not in ("energy", "Lattice", "Properties", "pbc", "Config_type", "Weight")
+    )
     handle.write(f"{n_atoms}\n")
     handle.write(
         f'Lattice="{cell[0,0]:.10f} {cell[0,1]:.10f} {cell[0,2]:.10f} '
         f'{cell[1,0]:.10f} {cell[1,1]:.10f} {cell[1,2]:.10f} '
         f'{cell[2,0]:.10f} {cell[2,1]:.10f} {cell[2,2]:.10f}" '
         f'energy={energy:.10f} '
-        f'Properties=species:S:1:pos:R:3:force:R:3:spin:R:3:torque:R:3:moment:R:3\n'
+        f'Properties=species:S:1:pos:R:3:force:R:3:spin:R:3:torque:R:3:moment:R:3'
+        f'{" " + extra_info if extra_info else ""}\n'
     )
     for i, sym in enumerate(symbols):
         f = arrays["force"][i]
