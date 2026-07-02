@@ -41,7 +41,7 @@ def _read_nep_loss(loss_out_path):
     if not os.path.exists(loss_out_path):
         return None
     try:
-        data = np.loadtxt(loss_out_path)
+        data = np.loadtxt(loss_out_path, ndmin=2)
         last_line = data[-1]
     except Exception:
         return None
@@ -51,11 +51,75 @@ def _read_nep_loss(loss_out_path):
         "total_loss": float(last_line[1]),
         "rmse_energy": float(last_line[4]),
         "rmse_force": float(last_line[5]),
+        "n_columns": len(last_line),
+        "has_magnetic_loss": len(last_line) >= 16,
     }
     if len(last_line) >= 10:
         result["rmse_energy_test"] = float(last_line[7])
         result["rmse_force_test"] = float(last_line[8])
+    if len(last_line) >= 16:
+        result["rmse_moment_x"] = float(last_line[10])
+        result["rmse_moment_y"] = float(last_line[11])
+        result["rmse_moment_z"] = float(last_line[12])
+        result["rmse_torque_x"] = float(last_line[13])
+        result["rmse_torque_y"] = float(last_line[14])
+        result["rmse_torque_z"] = float(last_line[15])
     return result
+
+
+def parse_prediction_metrics(pred_dir: str) -> dict:
+    """Parse NEP prediction outputs for per-component parity metrics.
+
+    Reads ``energy.out``, ``force.out``, and optional ``spin.out`` from the
+    prediction directory. Each file has the format::
+
+        pred_1 pred_2 ... pred_N dft_1 dft_2 ... dft_N
+
+    Returns a dict with per-component RMSE values.
+    """
+    import os
+
+    pred = os.path.expanduser(pred_dir)
+    metrics: dict = {}
+
+    # force.out: fx_p fy_p fz_p fx_dft fy_dft fz_dft
+    force_file = os.path.join(pred, "force.out")
+    if os.path.exists(force_file):
+        try:
+            data = np.loadtxt(force_file, ndmin=2)
+            n_cols = data.shape[1] // 2
+            labels = ["x", "y", "z", "xx", "yy", "zz", "yz", "xz", "xy"]
+            for i in range(min(n_cols, len(labels))):
+                diff = data[:, i] - data[:, i + n_cols]
+                metrics[f"force_{labels[i]}_rmse"] = float(np.sqrt(np.mean(diff ** 2)))
+        except Exception:
+            pass
+
+    # energy.out: e_p e_dft
+    energy_file = os.path.join(pred, "energy.out")
+    if os.path.exists(energy_file):
+        try:
+            data = np.loadtxt(energy_file, ndmin=2)
+            if data.shape[1] >= 2:
+                diff = data[:, 0] - data[:, 1]
+                metrics["energy_rmse"] = float(np.sqrt(np.mean(diff ** 2)))
+        except Exception:
+            pass
+
+    # spin.out: Sx_p Sy_p Sz_p Sx_dft Sy_dft Sz_dft
+    spin_file = os.path.join(pred, "spin.out")
+    if os.path.exists(spin_file):
+        try:
+            data = np.loadtxt(spin_file, ndmin=2)
+            n_cols = data.shape[1] // 2
+            for i, lbl in enumerate(["x", "y", "z"]):
+                if i < n_cols:
+                    diff = data[:, i] - data[:, i + n_cols]
+                    metrics[f"moment_{lbl}_rmse"] = float(np.sqrt(np.mean(diff ** 2)))
+        except Exception:
+            pass
+
+    return metrics
 
 
 def _find_loss_out(work_path, generation):
@@ -114,6 +178,10 @@ def check_status(work_path):
 
     stage_reports = load_stage_reports(work_path, generation=generation)
 
+    # Prediction metrics (from last pred step)
+    pred_dir = os.path.join(work_path, f"Generation-{generation}", "pred")
+    pred_metrics = parse_prediction_metrics(pred_dir)
+
     # Build status
     status = {
         "work_path": work_path,
@@ -124,6 +192,7 @@ def check_status(work_path):
         "is_restart": is_restart,
         "loss": loss_info,
         "loss_path": loss_path,
+        "pred_metrics": pred_metrics,
         "stage_reports": stage_reports,
     }
 
@@ -151,14 +220,33 @@ def _print_status(status):
     loss = status.get("loss")
     if loss:
         print(f"\n  --- NEP Training Loss (latest) ---")
-        print(f"  Epoch          : {loss['epoch']}")
+        print(f"  Epoch          : {loss['epoch']} (n_columns={loss.get('n_columns', '?')})")
         print(f"  Energy RMSE    : {loss['rmse_energy']:.3f} meV/atom")
         print(f"  Force RMSE     : {loss['rmse_force']:.3f} meV/A")
         if "rmse_energy_test" in loss:
             print(f"  Energy RMSE(test): {loss['rmse_energy_test']:.3f} meV/atom")
             print(f"  Force RMSE(test) : {loss['rmse_force_test']:.3f} meV/A")
+        if loss.get("has_magnetic_loss"):
+            print(f"  --- Magnetic ---")
+            print(f"  Mx/Mz RMSE     : {loss['rmse_moment_x']:.4f} / {loss['rmse_moment_z']:.4f} μB")
+            print(f"  My RMSE        : {loss['rmse_moment_y']:.4f} μB")
+            print(f"  Tx/Ty/Tz RMSE  : {loss['rmse_torque_x']:.4f} / {loss['rmse_torque_y']:.4f} / {loss['rmse_torque_z']:.4f}")
     else:
         print(f"\n  (No loss.out found yet)")
+
+    pred = status.get("pred_metrics") or {}
+    if pred:
+        print(f"\n  --- Prediction Parity (per-component) ---")
+        energy = pred.get("energy_rmse")
+        if energy is not None:
+            print(f"  Energy RMSE    : {energy:.3f} eV")
+        fx = pred.get("force_x_rmse")
+        if fx is not None:
+            print(f"  Force X/Y/Z    : {fx:.4f} / {pred.get('force_y_rmse', 0):.4f} / {pred.get('force_z_rmse', 0):.4f} eV/A")
+        mx = pred.get("moment_x_rmse")
+        if mx is not None:
+            print(f"  Moment X/Y/Z   : {mx:.4f} / {pred.get('moment_y_rmse', 0):.4f} / {pred.get('moment_z_rmse', 0):.4f} μB")
+
 
     stage_reports = status.get("stage_reports") or {}
     if stage_reports:
