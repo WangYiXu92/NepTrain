@@ -19,19 +19,21 @@ class TestSobolStatistics(unittest.TestCase):
         
         # 1. Sobol Sampling
         # GB Angle: random -> [15, 90]
-        gen_sobol = perturb(self.atoms.copy(), 
+        gen_sobol = perturb(self.atoms.copy(),
                             gb=True, gb_angle='random', gb_dist=0.1,
                             sampler='sobol', seed=42, num=N,
-                            validate_structure=False)
+                            validate_structure=False,
+                            similarity_threshold=1.0)
         angles_sobol = []
         for s in gen_sobol:
             angles_sobol.append(s.info['perturb_annotation']['metadata']['angle'])
             
         # 2. Random Sampling
-        gen_random = perturb(self.atoms.copy(), 
+        gen_random = perturb(self.atoms.copy(),
                              gb=True, gb_angle='random', gb_dist=0.1,
                              sampler='random', seed=42, num=N,
-                             validate_structure=False)
+                             validate_structure=False,
+                             similarity_threshold=1.0)
         angles_random = []
         for s in gen_random:
             angles_random.append(s.info['perturb_annotation']['metadata']['angle'])

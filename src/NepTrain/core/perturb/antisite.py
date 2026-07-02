@@ -43,7 +43,12 @@ def get_equivalent_sites(
             result.setdefault(sym, []).append([i])
         return result
 
-    dataset = spglib.get_symmetry_dataset(atoms, symprec=symprec)
+    spglib_cell = (
+        atoms.get_cell().array,
+        atoms.get_scaled_positions(wrap=True),
+        atoms.get_atomic_numbers(),
+    )
+    dataset = spglib.get_symmetry_dataset(spglib_cell, symprec=symprec)
     if dataset is None:
         logger.warning("spglib symmetry analysis failed; falling back to per-atom groups")
         result = {}

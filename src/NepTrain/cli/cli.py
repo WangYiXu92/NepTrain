@@ -143,6 +143,12 @@ def build_perturb(subparsers):
                                 default=False,
                                 help="Resume Sobol sequence from state file (default: False).")
 
+    parser_perturb.add_argument("--no-validate",
+                                dest="validate_structure",
+                                action='store_false',
+                                default=True,
+                                help="Disable post-generation geometry validation (useful for unrelaxed GB/dislocation smoke tests).")
+
     parser_perturb.add_argument("--seed",
                                 dest="seed",
                                 type=int,

@@ -49,7 +49,7 @@ class TestCheckpointManager:
     @pytest.fixture
     def model(self):
         """Create a simple PyTorch model for testing."""
-        import torch
+        torch = pytest.importorskip("torch")
         import torch.nn as nn
 
         class SimpleModel(nn.Module):

@@ -1628,3 +1628,103 @@ def generate_symmetry_adapted_magnetic_structures(
                 all_structures.extend(structures)
         
         return all_structures
+
+
+def generate_magnetic_phase_transition_path(
+    atoms: Atoms,
+    start_phase: str = 'fm',
+    end_phase: str = 'afm',
+    n_intermediate: int = 5,
+    magnetic_elements: Optional[List[str]] = None,
+    magnetic_moment: float = 2.0,
+) -> List[Atoms]:
+    """Generate a simple magnetic phase interpolation path.
+
+    Backward-compatible convenience wrapper used by older tests/scripts.  It
+    returns structures with vector initial magnetic moments interpolating
+    between a ferromagnetic state and a two-sublattice AFM-like state.
+    """
+    magnetic_elements = magnetic_elements or sorted(set(atoms.get_chemical_symbols()))
+    magnetic_indices = [i for i, a in enumerate(atoms) if a.symbol in magnetic_elements]
+    if not magnetic_indices:
+        return [atoms.copy()]
+
+    n_steps = max(2, int(n_intermediate) + 2)
+    structures = []
+    for step in range(n_steps):
+        t = step / (n_steps - 1)
+        out = atoms.copy()
+        moments = np.zeros((len(out), 3), dtype=float)
+        for local_idx, atom_idx in enumerate(magnetic_indices):
+            start_sign = 1.0 if start_phase.lower() != 'afm' else (1.0 if local_idx % 2 == 0 else -1.0)
+            end_sign = 1.0 if end_phase.lower() != 'afm' else (1.0 if local_idx % 2 == 0 else -1.0)
+            sign = (1 - t) * start_sign + t * end_sign
+            moments[atom_idx, 2] = magnetic_moment * sign
+        if 'initial_magmoms' in out.arrays:
+            del out.arrays['initial_magmoms']
+        out.set_initial_magnetic_moments(moments)
+        out.info['magnetic_phase_path'] = {
+            'start_phase': start_phase,
+            'end_phase': end_phase,
+            'step': step,
+            't': t,
+        }
+        structures.append(out)
+    return structures
+
+
+def generate_antiferromagnetic_configurations(
+    atoms: Atoms,
+    magnetic_elements: Optional[List[str]] = None,
+    propagation_vectors: Optional[List[np.ndarray]] = None,
+    moment_magnitude: float = 2.0,
+    max_structures: int = 8,
+) -> List[Atoms]:
+    """Generate simple AFM configurations for legacy callers."""
+    magnetic_elements = magnetic_elements or sorted(set(atoms.get_chemical_symbols()))
+    propagation_vectors = propagation_vectors or [np.array([0.5, 0.5, 0.5]), np.array([0.5, 0.0, 0.0])]
+    structures = []
+    for k in propagation_vectors[:max_structures]:
+        out = atoms.copy()
+        moments = np.zeros((len(out), 3), dtype=float)
+        scaled = out.get_scaled_positions(wrap=True)
+        for i, atom in enumerate(out):
+            if atom.symbol not in magnetic_elements:
+                continue
+            phase = np.dot(scaled[i], np.asarray(k, dtype=float))
+            sign = 1.0 if np.cos(2 * np.pi * phase) >= 0 else -1.0
+            moments[i, 2] = sign * moment_magnitude
+        if 'initial_magmoms' in out.arrays:
+            del out.arrays['initial_magmoms']
+        out.set_initial_magnetic_moments(moments)
+        out.info['propagation_vector'] = np.asarray(k, dtype=float).tolist()
+        structures.append(out)
+    return structures[:max_structures]
+
+
+def generate_magnetic_interstitial_structures(
+    atoms: Atoms,
+    magnetic_elements: Optional[List[str]] = None,
+    moment_magnitude: float = 2.0,
+    **kwargs,
+) -> List[Atoms]:
+    """Legacy placeholder: return a magnetically initialized copy.
+
+    Interstitial geometry generation is handled elsewhere; this helper only
+    provides a stable import/signature for older scripts.
+    """
+    return [apply_magnetic_perturbation(atoms, mode='collinear', magnetic_elements=magnetic_elements, moment_magnitude=moment_magnitude)]
+
+
+def generate_magnetic_twinning_structures(
+    atoms: Atoms,
+    magnetic_elements: Optional[List[str]] = None,
+    moment_magnitude: float = 2.0,
+    **kwargs,
+) -> List[Atoms]:
+    """Legacy placeholder: return a magnetically initialized copy.
+
+    Twinning geometry generation is handled by ``twinning.generate_twinning``;
+    this helper preserves the public magnetic convenience import.
+    """
+    return [apply_magnetic_perturbation(atoms, mode='collinear', magnetic_elements=magnetic_elements, moment_magnitude=moment_magnitude)]

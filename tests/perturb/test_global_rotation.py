@@ -17,6 +17,7 @@ class TestGlobalRotation(unittest.TestCase):
                              rotate_cell=True, 
                              cell_pert_fraction=0.0, # Disable strain to isolate rotation
                              min_distance=0.01,
+                             similarity_threshold=1.0,
                              sampler='random'))
         
         self.assertEqual(len(atoms_list), 5)
@@ -39,6 +40,7 @@ class TestGlobalRotation(unittest.TestCase):
                              rotate_cell=True, 
                              cell_pert_fraction=0.0,
                              min_distance=0.01,
+                             similarity_threshold=1.0,
                              sampler='sobol'))
         
         self.assertEqual(len(atoms_list), 10)

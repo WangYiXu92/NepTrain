@@ -42,7 +42,7 @@ class TestPerturbOrder(unittest.TestCase):
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
-    @patch("NepTrain.core.perturb.run.apply_magnetic_perturbation")
+    @patch("NepTrain.core.perturb.run._safe_apply_magnetic_perturbation")
     @patch("NepTrain.core.perturb.run.rotate_fragments_by_formula")
     @patch("NepTrain.core.perturb.run.generate_vacancies")
     @patch("NepTrain.core.perturb.run.shuffle_element_positions")
@@ -120,7 +120,7 @@ class TestPerturbOrder(unittest.TestCase):
         self.assertEqual(actual_calls, expected_calls)
 
 
-    @patch("NepTrain.core.perturb.run.apply_magnetic_perturbation")
+    @patch("NepTrain.core.perturb.run._safe_apply_magnetic_perturbation")
     @patch("NepTrain.core.perturb.run.generate_deformed_structure")
     def test_skip_normal(self, mock_deformed, mock_mag):
         """Test skipping normal perturbation."""

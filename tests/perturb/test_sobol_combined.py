@@ -34,7 +34,11 @@ class TestSobolCombined(unittest.TestCase):
             
             'sampler': 'sobol',
             'cell_pert_fraction': 0.0, # Disable cell strain
-            'min_distance': 0.1,
+            # Topology changes force post-topology displacement to the random
+            # fallback path; disable that thermal noise so seed determinism is
+            # testing Sobol-controlled dislocation/magnetic parameters only.
+            'min_distance': 0.0,
+            'similarity_threshold': 1.0,
             'validate_structure': False,
             'num': 5
         }

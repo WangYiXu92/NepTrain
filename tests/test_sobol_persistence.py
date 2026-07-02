@@ -18,7 +18,7 @@ class TestSobolPersistence(unittest.TestCase):
 
     def test_save_state(self):
         # Generate 5 structures and save state
-        gen = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file)
+        gen = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file, similarity_threshold=1.0)
         list(gen)
         
         self.assertTrue(os.path.exists(self.state_file))
@@ -30,7 +30,7 @@ class TestSobolPersistence(unittest.TestCase):
 
     def test_resume_state(self):
         # 1. Generate first 5
-        gen1 = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file)
+        gen1 = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file, similarity_threshold=1.0)
         list(gen1)
         
         # 2. Generate next 5 (resuming)
@@ -38,7 +38,7 @@ class TestSobolPersistence(unittest.TestCase):
         # But our perturb(num=X) usually means "generate X structures total" or "X more"?
         # Standard interpretation: num is "number to generate in THIS run".
         # So if we resume, we fast-forward by saved state, then generate num.
-        gen2 = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file, resume=True)
+        gen2 = perturb(self.atoms, num=5, sampler='sobol', state_file=self.state_file, resume=True, similarity_threshold=1.0)
         structs2 = list(gen2)
         self.assertEqual(len(structs2), 5)
         
@@ -53,7 +53,7 @@ class TestSobolPersistence(unittest.TestCase):
         seed = 42
         
         # Run A: 10 at once
-        gen_a = perturb(self.atoms, num=10, sampler='sobol', seed=seed)
+        gen_a = perturb(self.atoms, num=10, sampler='sobol', seed=seed, similarity_threshold=1.0)
         structs_a = list(gen_a)
         
         # Run B: 5 then 5
@@ -62,10 +62,10 @@ class TestSobolPersistence(unittest.TestCase):
             os.remove(state_file_b)
             
         try:
-            gen_b1 = perturb(self.atoms, num=5, sampler='sobol', seed=seed, state_file=state_file_b)
+            gen_b1 = perturb(self.atoms, num=5, sampler='sobol', seed=seed, state_file=state_file_b, similarity_threshold=1.0)
             structs_b1 = list(gen_b1)
             
-            gen_b2 = perturb(self.atoms, num=5, sampler='sobol', seed=seed, state_file=state_file_b, resume=True)
+            gen_b2 = perturb(self.atoms, num=5, sampler='sobol', seed=seed, state_file=state_file_b, resume=True, similarity_threshold=1.0)
             structs_b2 = list(gen_b2)
             
             # Check positions of 6th structure (index 0 of second batch vs index 5 of first batch)

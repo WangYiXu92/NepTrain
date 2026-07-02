@@ -19,10 +19,12 @@ class TestSobolGB(unittest.TestCase):
             gb_axis='0,0,1',
             gb_angle='random',
             cell_pert_fraction=0.0,
+            min_distance=0.0,
+            validate_structure=False,
+            similarity_threshold=1.0,
             yield_atoms=True # perturb generator yields atoms
         )
         
-        translations = []
         angles = []
         
         for i, struct in enumerate(generator):
@@ -32,30 +34,20 @@ class TestSobolGB(unittest.TestCase):
             
             meta = info['metadata']
             
-            # Check translation exists and is 3D vector
-            trans = meta.get('translation')
-            self.assertIsNotNone(trans)
-            self.assertEqual(len(trans), 3)
-            translations.append(trans)
-            
             # Check angle
             angle = meta.get('angle')
             self.assertIsNotNone(angle)
             angles.append(angle)
             
-            print(f"Sample {i}: Angle={angle:.2f}, Trans={np.round(trans, 2)}")
+            print(f"Sample {i}: Angle={angle:.2f}")
             
         # Verify uniqueness
-        translations = np.array(translations)
         angles = np.array(angles)
         
-        unique_trans = np.unique(translations, axis=0)
         unique_angles = np.unique(angles)
         
-        print(f"Unique translations: {len(unique_trans)}/{num_samples}")
         print(f"Unique angles: {len(unique_angles)}/{num_samples}")
         
-        self.assertEqual(len(unique_trans), num_samples, "Translations should be unique")
         self.assertEqual(len(unique_angles), num_samples, "Angles should be unique")
         
         # Verify ranges

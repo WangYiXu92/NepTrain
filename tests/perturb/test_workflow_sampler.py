@@ -25,9 +25,10 @@ class TestWorkflowSampler(unittest.TestCase):
         results = perturb(
             self.atoms,
             num=2,
-            use_sobol=True,
+            sampler='sobol',
             seed=42,
-            cell_pert_fraction=0.01
+            cell_pert_fraction=0.01,
+            similarity_threshold=1.0,
         )
         results = list(results)
         self.assertEqual(len(results), 2)

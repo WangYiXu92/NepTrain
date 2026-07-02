@@ -101,7 +101,7 @@ class TestPerturbCLI(unittest.TestCase):
     def test_grain_boundary_cli(self):
         print("Testing grain boundary CLI...")
         # Using a simple GB configuration
-        result = self.run_cli(["-n", "1", "--gb", "--gb-axis", "0,0,1", "--gb-angle", "36.87"])
+        result = self.run_cli(["-n", "1", "--gb", "--gb-axis", "0,0,1", "--gb-angle", "36.87", "--no-validate"])
         self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
         self.assertTrue(os.path.exists(self.output_file))
 

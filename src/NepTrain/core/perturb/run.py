@@ -20,19 +20,22 @@ from NepTrain.exceptions import FileOperationError, ValidationError, Perturbatio
 from NepTrain.logging_config import get_logger
 from NepTrain.core.select.filter import adjust_reasonable, get_mini_distance_info
 from NepTrain.core.select.select import filter_by_bonds, compute_min_bond_lengths
-from .magnetic import apply_magnetic_perturbation, get_magmom_config, get_magnetic_perturbation_dims
+from .magnetic import get_magmom_config, get_magnetic_perturbation_dims
 from .rotate import rotate_fragments_by_formula, get_molecules, parse_formula_dict
 from .vacancy import generate_vacancies, _filter_vacancies_for_export
 from .antisite import generate_antisite_defects
 from .shuffle import shuffle_element_positions, _parse_element_range, _filter_fixed_indices
-from .surface import generate_surface
-from .grain_boundary import generate_grain_boundary
 from .csl_core import get_csl_data, generate_integer_axes, get_csl_angle
-from .dislocation import generate_dislocation
-from .twinning import generate_twinning
-from .stacking_fault import generate_stacking_fault
-from .amorphous import generate_amorphous
 from .crystal import create_oriented_supercell, get_burgers_vector
+from .safe_wrappers import (
+    _safe_apply_magnetic_perturbation,
+    _safe_generate_amorphous,
+    _safe_generate_dislocation,
+    _safe_generate_grain_boundary,
+    _safe_generate_stacking_fault,
+    _safe_generate_surface,
+    _safe_generate_twinning,
+)
 from .sampler import SobolSampler, RandomSampler
 from .rigid import generate_rigid_perturbed_structure, RigidBodyManager, parse_rigid_list_string
 from .symmetry_strain import generate_symmetry_preserving_strain, detect_crystal_system_spglib, get_independent_strain_count
@@ -471,7 +474,8 @@ def perturb(atoms: Atoms,
         if resume and state_file:
             state = _load_state(state_file)
             if state and state.get('num_generated', 0) > 0:
-                s_sampler.random(n=int(state['num_generated']))
+                start_index = int(state['num_generated'])
+                s_sampler.random(n=start_index)
 
     # Pre-calculate base bond lengths if filtering
     base_bond = None
@@ -1538,176 +1542,6 @@ def _validate_perturb_args(
         logger.warning(
             "No perturbation type enabled. Use skip_normal=True if intentional."
         )
-
-
-def _safe_generate_surface(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate surface with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Surface generation parameters
-        
-    Returns:
-        Atoms: Surface structure
-        
-    Raises:
-        PerturbationError: If surface generation fails
-    """
-    try:
-        return generate_surface(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Surface generation failed: {e}",
-            operation="surface",
-            suggestion="Check surface indices and vacuum parameters"
-        ) from e
-
-
-def _safe_generate_grain_boundary(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate grain boundary with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: GB generation parameters
-        
-    Returns:
-        Atoms: GB structure
-        
-    Raises:
-        PerturbationError: If GB generation fails
-    """
-    try:
-        return generate_grain_boundary(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Grain boundary generation failed: {e}",
-            operation="grain_boundary",
-            suggestion="Check axis, angle, and overlap distance parameters"
-        ) from e
-
-
-def _safe_generate_dislocation(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate dislocation with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Dislocation generation parameters
-        
-    Returns:
-        Atoms: Dislocation structure
-        
-    Raises:
-        PerturbationError: If dislocation generation fails
-    """
-    try:
-        return generate_dislocation(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Dislocation generation failed: {e}",
-            operation="dislocation",
-            suggestion="Check axis, burgers vector, and center parameters"
-        ) from e
-
-
-def _safe_generate_twinning(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate twinning with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Twinning generation parameters
-        
-    Returns:
-        Atoms: Twinning structure
-        
-    Raises:
-        PerturbationError: If twinning generation fails
-    """
-    try:
-        return generate_twinning(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Twinning generation failed: {e}",
-            operation="twinning",
-            suggestion="Check Miller indices and minimum distance parameters"
-        ) from e
-
-
-def _safe_generate_stacking_fault(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate stacking fault with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Stacking fault generation parameters
-        
-    Returns:
-        Atoms: Stacking fault structure
-        
-    Raises:
-        PerturbationError: If stacking fault generation fails
-    """
-    try:
-        return generate_stacking_fault(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Stacking fault generation failed: {e}",
-            operation="stacking_fault",
-            suggestion="Check plane normal and shift vector parameters"
-        ) from e
-
-
-def _safe_generate_amorphous(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely generate amorphous structure with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Amorphous generation parameters
-        
-    Returns:
-        Atoms: Amorphous structure
-        
-    Raises:
-        PerturbationError: If amorphous generation fails
-    """
-    try:
-        return generate_amorphous(atoms, **kwargs)
-    except Exception as e:
-        raise PerturbationError(
-            f"Amorphous generation failed: {e}",
-            operation="amorphous",
-            suggestion="Check minimum distance and rattle strength parameters"
-        ) from e
-
-
-def _safe_apply_magnetic_perturbation(atoms: Atoms, **kwargs) -> Atoms:
-    """
-    Safely apply magnetic perturbation with error handling.
-    
-    Args:
-        atoms: Input structure
-        **kwargs: Magnetic perturbation parameters
-        
-    Returns:
-        Atoms: Magnetically perturbed structure
-        
-    Raises:
-        PerturbationError: If magnetic perturbation fails
-    """
-    try:
-        return apply_magnetic_perturbation(atoms, **kwargs)
-    except ValueError as e:
-        if "Not enough random values" in str(e):
-            raise
-        raise PerturbationError(
-            f"Magnetic perturbation failed: {e}",
-            operation="magnetic",
-            suggestion="Check magnetic mode and configuration parameters"
-        ) from e
 
 
 if __name__ == "__main__":

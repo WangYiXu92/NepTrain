@@ -582,19 +582,3 @@ def get_twinning_plane_info(crystal_type: str) -> dict:
     return info.get(crystal_type, {})
 
 
-def detect_crystal_type(structure: Atoms) -> str:
-    """Detect crystal structure type.
-    
-    Uses CrystalDetector for unified crystal analysis.
-    
-    Args:
-        structure: ASE Atoms object
-        
-    Returns:
-        Crystal type: 'bcc', 'fcc', 'hcp', 'diamond', 'tetragonal', or 'unknown'
-    """
-    detector = CrystalDetector(structure)
-    return detector.detect()
-# NOTE: The second generate_twinning definition below was a broken class-like
-# function that shadowed the real generate_twinning (line 367). Removed.
-
